@@ -184,7 +184,7 @@ installer/requirements.txt`, then `python installer/build_exe.py` writes `dist/L
 - `.LED` lighting files are self-describing (TypeList/ClassList schema, then `MOBJ` objects with fields in schema
   order, little endian). See `converter/led.py`.
 
-## Not done yet
+## Not done yet -
 
 - Lightmaps are per vertex (subdivided), not per pixel. Small sharp shadows are softer than in the game.
 - Helper meshes (untextured, no UVs, vertex colour exactly 1: terrain/collision shells, the shadow imposter) are
