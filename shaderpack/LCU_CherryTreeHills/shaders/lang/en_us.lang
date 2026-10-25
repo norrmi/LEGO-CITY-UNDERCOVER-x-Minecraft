@@ -1,0 +1,27 @@
+option.BLOOM=Bloom
+option.BLOOM.comment=Bloom strength (LCU NOON: intensity 0.8 above threshold 0.5)
+option.EXPOSURE=Exposure
+option.FOG_AMOUNT=Fog
+option.FOG_AMOUNT.comment=1.0 = the game's NOON fog distance
+option.FXAA=Anti-aliasing (FXAA)
+option.FXAA.comment=Smooths jagged edges
+option.NORMAL_MAPS=Normal maps
+option.NORMAL_MAPS.comment=Relief of bricks, tiles and planks from the game's normal maps
+option.NORMAL_STRENGTH=Normal map strength
+option.NORMAL_FLIP_Y=Normal map green flip
+option.NORMAL_FLIP_Y.comment=Switch if relief looks inverted
+option.SHADOWS=Shadows
+option.SHADOWS.comment=Real-time sun shadows along the game's sun direction
+option.SHADOW_STRENGTH=Shadow strength
+option.shadowMapResolution=Shadow quality
+option.SHADOW_HALF=Shadow distance
+option.SHADOW_HALF.comment=Blocks around you that get shadows. Shorter = faster
+option.SHADOW_FILTER=Soft shadows
+option.SHADOW_FILTER.comment=Smooth shadow edges (9 samples instead of 1)
+option.shadowMapResolution.comment=Sharper shadows cost more. 1024 is fastest
+profile.LOW=Low
+profile.LOW.comment=No shadows, no normal maps: fastest
+profile.MEDIUM=Medium
+profile.MEDIUM.comment=Shadows within 48 blocks, 1024 map
+profile.HIGH=High
+profile.HIGH.comment=Soft shadows within 80 blocks, 2048 map

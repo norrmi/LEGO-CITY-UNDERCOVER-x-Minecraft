@@ -1,0 +1,7 @@
+{
+	"required": true,
+	"package": "dev.lcucraft.mixin",
+	"compatibilityLevel": "JAVA_17",
+	"mixins": ["WorldCollisionMixin", "LivingEntityClimbMixin", "VehicleMoveMixin"],
+	"injectors": {"defaultRequire": 1}
+}

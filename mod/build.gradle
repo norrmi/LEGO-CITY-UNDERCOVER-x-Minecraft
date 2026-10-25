@@ -1,0 +1,64 @@
+plugins {
+	id 'fabric-loom' version "${loom_version}"
+}
+
+repositories {
+	mavenCentral()
+}
+
+loom {
+	splitEnvironmentSourceSets()
+	mods {
+		"lcucraft" {
+			sourceSet sourceSets.main
+			sourceSet sourceSets.client
+		}
+	}
+	runs {
+		client {
+			programArgs "--width", "1280", "--height", "720"
+			vmArg "-Dlcucraft.dataDir=" + file('../build/lcu_data').absolutePath
+		}
+		devTest {
+			inherit client
+			name "Dev Test (screenshots)"
+			vmArg "-Dlcucraft.devTest=Cherry Tree Hills"
+			vmArg "-Dlcucraft.dataDir=" + file('../build/lcu_data').absolutePath
+			// dev machines with very long project paths: Windows cannot load DLLs past 260 chars (error 206)
+			if (project.hasProperty('nativesDir')) {
+				vmArg "-Dorg.lwjgl.librarypath=${project.property('nativesDir')}"
+				vmArg "-Djava.library.path=${project.property('nativesDir')}"
+			}
+		}
+		devPerf {
+			inherit client
+			name "Dev Test (FPS)"
+			vmArg "-Dlcucraft.devTest=Cherry Tree Hills"
+			vmArg "-Dlcucraft.devPerf=true"
+			vmArg "-Dlcucraft.dataDir=" + file('../build/lcu_data').absolutePath
+		}
+		server {
+			vmArg "-Dlcucraft.dataDir=" + file('../build/lcu_data').absolutePath
+		}
+	}
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+}
+
+processResources {
+	def version = project.version
+	inputs.property "version", version
+	filesMatching("fabric.mod.json") { expand "version": version }
+}
+
+tasks.withType(JavaCompile).configureEach { it.options.release = 17 }
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_17
+	targetCompatibility = JavaVersion.VERSION_17
+}

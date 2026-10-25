@@ -1,0 +1,26 @@
+# converted game data: made on each user's PC from their own copy of the game, never shared
+build/
+lcu_data/
+*.lcum
+*.dds
+preview_*.png
+# generated from the game's lighting files by the converter
+shaderpack/LCU_CherryTreeHills/shaders/lcu_lighting.glsl
+
+# Gradle / Minecraft dev runs
+mod/.gradle/
+mod/build/
+mod/run/
+mod/out/
+.gradle/
+
+# Python
+__pycache__/
+*.pyc
+
+# editors / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
