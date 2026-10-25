@@ -1,4 +1,4 @@
-# LEGO City Undercover x Minecraft
+# LEGO City Undercover x Minecraft 
 
 **Fan-made project.** Cherry Tree Hills and Little Italy from LEGO City Undercover in Minecraft **1.18.2 (Fabric)**,
 with the game's real 3D models, textures, baked lighting, sky, water, sounds, LEGO objects, parkour, the police
