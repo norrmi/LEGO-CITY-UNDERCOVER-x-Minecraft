@@ -6,6 +6,8 @@
 	"description": "Fan-made: Cherry Tree Hills and Little Italy from LEGO City Undercover, converted on your PC from your own copy of the game. Not affiliated with TT Games, Warner Bros. or the LEGO Group.",
 	"authors": ["norrmi"],
 	"license": "MIT",
+	"icon": "assets/lcucraft/icon.png",
+	"contact": {"sources": "https://github.com/norrmi/LEGO-CITY-UNDERCOVER-x-Minecraft"},
 	"environment": "*",
 	"entrypoints": {
 		"main": ["dev.lcucraft.LcuCraft"],
@@ -14,7 +16,7 @@
 	"mixins": ["lcucraft.mixins.json", {"config": "lcucraft.client.mixins.json", "environment": "client"}],
 	"depends": {
 		"fabricloader": ">=0.14.0",
-		"fabric-api": "*",
+		"fabric-api-base": "*",
 		"minecraft": "1.18.2",
 		"java": ">=17"
 	}

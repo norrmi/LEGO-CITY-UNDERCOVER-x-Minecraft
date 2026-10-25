@@ -20,7 +20,19 @@ public class LcuCraftClient implements ClientModInitializer {
 		IrisCompat.registerNormalMaps();
 		ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
 			// single player: the integrated server's save carries the marker file
-			active = LcuData.enabledIn(client.getServer()) && LcuData.available();
+			boolean lcuWorld = LcuData.enabledIn(client.getServer());
+			active = lcuWorld && LcuData.available();
+			if (lcuWorld && !active) {
+				// the world is there but the game was never converted for this instance: say what to run
+				client.execute(() -> {
+					if (client.player != null) {
+						client.player.sendMessage(new net.minecraft.text.LiteralText(
+								"LEGO City Undercover data not found in " + LcuData.dir()
+										+ ". Run LCU-Installer.exe for this Minecraft instance, then rejoin.")
+								.formatted(net.minecraft.util.Formatting.YELLOW), false);
+					}
+				});
+			}
 			if (active) {
 				LcuCraft.LOG.info("Loading Cherry Tree Hills from {}", LcuData.dir());
 				client.execute(() -> {

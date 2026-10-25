@@ -14,40 +14,45 @@ station and the ice cream parlour inside, and Chase McCain's car to drive. Nothi
 
 | Folder | What it is |
 |---|---|
-| `installer/` | `install.bat` / `install.py`: converts your game and installs everything into a Minecraft instance |
-| `dist/` | the built mod (`lcucraft-0.1.0.jar`) |
+| `dist/` | **`LCU-Installer.exe`** (the installer, nothing else needed) and the built mod `lcucraft-1.0.0.jar` (Fabric API inside) |
+| `installer/` | the installer's source: `gui.py` (the window), `install.py` (the steps, also usable from the command line), `build_exe.py` |
 | `mod/` | Fabric 1.18.2 mod source: draws the converted meshes, sky, fog, collision, cars, interiors |
 | `converter/` | Python: reads the game's GSC/GHG/NXG_TEXTURES/RES/LED/GIZ files and writes meshes, textures, collision, lighting |
 | `shaderpack/LCU_CherryTreeHills/` | Iris shader pack: the game's sun, shadows, fog, bloom, water; presets LOW/MEDIUM/HIGH |
 
 ## Install
 
-You need:
+You need LEGO City Undercover for PC installed (tested with the Steam version) and a Minecraft account with the
+official Minecraft Launcher, the Modrinth App, Prism Launcher or CurseForge.
 
-- LEGO City Undercover (PC) installed
-- a Minecraft **1.18.2** instance with **Fabric Loader** and **Fabric API 0.77.0+1.18.2** (made with the Modrinth
-  App, Prism Launcher or the Fabric installer); for shaders also **Iris** and **Sodium** for 1.18.2
-- **Python 3.10+** ([python.org](https://www.python.org/downloads/), tick "Add python.exe to PATH")
+1. Download [`dist/LCU-Installer.exe`](dist/LCU-Installer.exe) and run it (Windows may warn that it is from an
+   unknown publisher: *More info > Run anyway*).
+2. It finds the game through Steam (or pick its folder) and lists your Minecraft instances. Choose either
+   - an existing **Minecraft 1.18.2 Fabric** instance (marked `*` when it is surely one), or
+   - **a new profile in the official Minecraft Launcher**: it installs Fabric Loader for 1.18.2 and adds the profile
+     "LEGO City Undercover x Minecraft" (close the launcher first).
+3. Press **Install**. It converts the game (2-3 minutes, ~1 GB), puts the mod into `mods/` (Fabric API is inside the
+   mod, nothing else to install), downloads Sodium 0.4.1 and Iris 1.6.11 from Modrinth for the shaders (untick it if
+   you don't want them), adds the shader pack and creates the world **Cherry Tree Hills** (an existing one is left
+   alone).
+4. Start the instance or the profile, open the world, and pick the shader pack `LCU_CherryTreeHills` in
+   Options > Video Settings > Shader Packs if you like.
 
-On Windows, double-click `installer\install.bat` and give it the two folders when it asks, or pass them:
+Run the installer again after an update: untick "Convert the game" to only replace the mod and the shader pack.
+
+Without the window (or with Python instead of the exe):
 
 ```bat
-installer\install.bat "C:\Program Files (x86)\Steam\steamapps\common\LEGO City Undercover" "C:\Users\you\AppData\Roaming\ModrinthApp\profiles\My LCU instance"
+LCU-Installer.exe --game "C:\Program Files (x86)\Steam\steamapps\common\LEGO City Undercover" --instance "C:\path\to\instance" --extras
 ```
-
-On any system:
 
 ```bash
 python -m pip install -r installer/requirements.txt
 ```
 
 ```bash
-python installer/install.py --game "<LEGO City Undercover folder>" --instance "<Minecraft instance folder>"
+python installer/install.py --game "<LEGO City Undercover folder>" --instance "<Minecraft instance folder>" --extras
 ```
-
-The installer converts the game (a few minutes, ~1 GB), puts the mod into `mods/`, the shader pack into
-`shaderpacks/`, the converted data into `lcu_data/` and creates the world **Cherry Tree Hills** (an existing one is
-left alone). Start the instance, open the world, and pick the shader pack `LCU_CherryTreeHills` in Iris if you like.
 
 In game:
 
@@ -64,7 +69,8 @@ In game:
 cd mod && ./gradlew build
 ```
 
-The jar lands in `mod/build/libs/`. For development, `./gradlew runClient` uses the data in `build/lcu_data`
+The jar lands in `mod/build/libs/` (copy it to `dist/`). The installer exe: `python -m pip install pyinstaller -r
+installer/requirements.txt`, then `python installer/build_exe.py` writes `dist/LCU-Installer.exe`. For development, `./gradlew runClient` uses the data in `build/lcu_data`
 (convert into it with `python converter/export_lcu.py "<game>" build/lcu_data shaderpack/LCU_CherryTreeHills`).
 
 ## What is converted (first import)
