@@ -25,7 +25,7 @@ station and the ice cream parlour inside, and Chase McCain's car to drive. Nothi
 You need LEGO City Undercover for PC installed (tested with the Steam version) and a Minecraft account with the
 official Minecraft Launcher, the Modrinth App, Prism Launcher or CurseForge.
 
-1. Download [`dist/LCU-Installer.exe`](dist/LCU-Installer.exe) and run it (Windows may warn that it is from an
+1. Download **LCU-Installer.exe** from [Releases](https://github.com/norrmi/LEGO-CITY-UNDERCOVER-x-Minecraft/releases/latest) and run it (Windows may warn that it is from an
    unknown publisher: *More info > Run anyway*).
 2. It finds the game through Steam (or pick its folder) and lists your Minecraft instances. Choose either
    - an existing **Minecraft 1.18.2 Fabric** instance (marked `*` when it is surely one), or
