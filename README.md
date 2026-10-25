@@ -14,7 +14,7 @@ station and the ice cream parlour inside, and Chase McCain's car to drive. Nothi
 
 | Folder | What it is |
 |---|---|
-| `dist/` | **`LCU-Installer.exe`** (the installer, nothing else needed) and the built mod `lcucraft-1.0.0.jar` (Fabric API inside) |
+| `dist/` | **`LCU-Installer.exe`** (the installer, nothing else needed; the folder version is on Releases) and the built mod `lcucraft-1.0.0.jar` (Fabric API inside) |
 | `installer/` | the installer's source: `gui.py` (the window), `install.py` (the steps, also usable from the command line), `build_exe.py` |
 | `mod/` | Fabric 1.18.2 mod source: draws the converted meshes, sky, fog, collision, cars, interiors |
 | `converter/` | Python: reads the game's GSC/GHG/NXG_TEXTURES/RES/LED/GIZ files and writes meshes, textures, collision, lighting |
@@ -26,7 +26,9 @@ You need LEGO City Undercover for PC installed (tested with the Steam version) a
 official Minecraft Launcher, the Modrinth App, Prism Launcher or CurseForge.
 
 1. Download **LCU-Installer.exe** from [Releases](https://github.com/norrmi/LEGO-CITY-UNDERCOVER-x-Minecraft/releases/latest) and run it (Windows may warn that it is from an
-   unknown publisher: *More info > Run anyway*).
+   unknown publisher: *More info > Run anyway*). If your antivirus blocks the one-file exe (a known false alarm
+   for Python-built installers), take **LCU-Installer-folder.zip** instead: unpack it anywhere and run
+   `LCU-Installer\LCU-Installer.exe` - same installer, built so it unpacks nothing when it starts.
 2. It finds the game through Steam (or pick its folder) and lists your Minecraft instances. Choose either
    - an existing **Minecraft 1.18.2 Fabric** instance (marked `*` when it is surely one), or
    - **a new profile in the official Minecraft Launcher**: it installs Fabric Loader for 1.18.2 and adds the profile

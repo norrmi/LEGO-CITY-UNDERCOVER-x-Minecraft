@@ -4,6 +4,8 @@ lcu_data/
 *.lcum
 *.dds
 preview_*.png
+# the folder installer is a release download only
+dist/LCU-Installer-folder.zip
 # generated from the game's lighting files by the converter
 shaderpack/LCU_CherryTreeHills/shaders/lcu_lighting.glsl
 
