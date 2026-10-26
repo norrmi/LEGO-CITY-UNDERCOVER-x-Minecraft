@@ -179,6 +179,87 @@ final class DevTest {
 		}
 	}
 
+	/** city test viewpoints: x, y, z, yaw, pitch, name (from world.json: every district, then the city from above) */
+	private static List<Object[]> cityViews;
+	private static int settled;
+
+	private static List<Object[]> cityViews() {
+		List<Object[]> out = new java.util.ArrayList<>();
+		try {
+			var tiles = dev.lcucraft.LcuData.json("world.json").getAsJsonArray("tiles");
+			java.util.Map<String, double[]> box = new java.util.LinkedHashMap<>();
+			for (var e : tiles) {
+				var o = e.getAsJsonObject();
+				if (!o.has("district") || !o.get("kind").getAsString().equals("city")) {
+					continue;
+				}
+				var b = o.getAsJsonArray("bounds");
+				double[] d = box.computeIfAbsent(o.get("district").getAsString(),
+						k -> new double[]{1e9, 1e9, 1e9, -1e9, -1e9, -1e9});
+				for (int i = 0; i < 3; i++) {
+					d[i] = Math.min(d[i], b.get(i).getAsDouble());
+					d[i + 3] = Math.max(d[i + 3], b.get(i + 3).getAsDouble());
+				}
+			}
+			double[] all = {1e9, 1e9, 1e9, -1e9, -1e9, -1e9};
+			box.forEach((name, d) -> {
+				// from the district's south edge, looking north over it
+				out.add(new Object[]{(d[0] + d[3]) / 2, Math.min(d[4], 250) + 60, d[5] + 40, 180.0, 30.0, name});
+				for (int i = 0; i < 3; i++) {
+					all[i] = Math.min(all[i], d[i]);
+					all[i + 3] = Math.max(all[i + 3], d[i + 3]);
+				}
+			});
+			// the whole city from high above its south-east corner (mostly the game's far versions)
+			out.add(new Object[]{all[3], 600.0, all[5], 135.0, 25.0, "whole_city"});
+			out.add(new Object[]{0.5, 120.0, 0.5, 90.0, 5.0, "far_view_west"});
+		} catch (Exception e) {
+			LcuCraft.LOG.warn("devTest: no tiles in world.json", e);
+		}
+		return out;
+	}
+
+	private static void city(net.minecraft.client.MinecraftClient mc) {
+		if (cityViews == null) {
+			cityViews = cityViews();
+			mc.player.sendChatMessage("/gamemode spectator");
+			mc.options.hudHidden = true;
+			shot = 0;
+			wait = 0;
+		}
+		if (shot >= cityViews.size()) {
+			System.gc();
+			Runtime rt = Runtime.getRuntime();
+			LcuCraft.LOG.info("devTest: city done, java heap used {} MB", (rt.totalMemory() - rt.freeMemory()) >> 20);
+			mc.scheduleStop();
+			stage = 99;
+			return;
+		}
+		Object[] v = cityViews.get(shot);
+		if (wait == 0) {
+			mc.player.sendChatMessage(String.format(java.util.Locale.ROOT, "/tp @s %.1f %.1f %.1f %.1f %.1f",
+					(double) v[0], (double) v[1], (double) v[2], (double) v[3], (double) v[4]));
+		}
+		wait++;
+		// at least 3 s there, then until everything around is on the GPU (at most 60 s)
+		if (!LcuCraftClient.RENDERER.uploaded() && wait < 1200) {
+			settled = 0;
+		}
+		if (wait > 60 && ++settled > 60) {
+			Runtime rt = Runtime.getRuntime();
+			// NVIDIA only (GL_NVX_gpu_memory_info): total and free video memory in KB, 0 elsewhere
+			int total = org.lwjgl.opengl.GL11.glGetInteger(0x9048), free = org.lwjgl.opengl.GL11.glGetInteger(0x9049);
+			org.lwjgl.opengl.GL11.glGetError();
+			LcuCraft.LOG.info("devTest: city view {} after {} ticks: tiles {} uploaded {} heap {} MB fps {} vram used {} MB", v[5], wait,
+					LcuCraftClient.RENDERER.loadedTiles(), LcuCraftClient.RENDERER.uploaded(),
+					(rt.totalMemory() - rt.freeMemory()) >> 20, mc.fpsDebugString.split(" ")[0], (total - free) >> 10);
+			ScreenshotRecorder.saveScreenshot(mc.runDirectory, "lcu_city_" + v[5] + ".png", mc.getFramebuffer(),
+					t -> LcuCraft.LOG.info("devTest: {}", t.getString()));
+			shot++;
+			wait = 0;
+		}
+	}
+
 	static void register() {
 		String world = System.getProperty("lcucraft.devTest");
 		if (world == null) {
@@ -196,11 +277,12 @@ final class DevTest {
 					mc.options.pauseOnLostFocus = false;  // another window taking focus must not pause the test
 					if (mc.player != null && LcuCraftClient.RENDERER.uploaded()) {
 						LcuCraft.LOG.info("devTest: meshes uploaded");
-						stage = Boolean.getBoolean("lcucraft.devPerf") ? 10 : 2;
+						stage = Boolean.getBoolean("lcucraft.devCity") ? 20 : Boolean.getBoolean("lcucraft.devPerf") ? 10 : 2;
 						wait = 0;
 					}
 				}
 				case 10 -> perf(mc);
+				case 20 -> city(mc);
 				case 2 -> {
 					if (wait == 0) {
 						double[] s = SHOTS[shot % SHOTS.length];

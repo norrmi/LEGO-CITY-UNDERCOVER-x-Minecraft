@@ -1,16 +1,19 @@
-"""Converts Cherry Tree Hills (SF_RESIDENTIAL) and Little Italy (NY_LITTLE_ITALY) where the game has them, the
-police station inside, the NOON sky and the NOON lighting from the user's own
-LEGO City Undercover install into the data the Minecraft mod loads.
+"""Converts LEGO City from the user's own LEGO City Undercover install into the data the Minecraft mod loads:
+every district (AREAS) where the game has it, the game's own far-away version of each tile, the police station and
+ice cream parlour inside, the sky and the lighting of each time of day.
 
     python export_lcu.py "<LEGO City Undercover folder>" <output folder> [<shader pack folder>]
 
 Output (nothing from the game is ever shipped; this runs on the player's PC):
-    meshes/<tile>.lcum   batched meshes per texture, already in Minecraft coordinates
-    sky.lcum             sky dome, centred on the camera
+    meshes/<tile>.lcum   batched meshes per texture, already in Minecraft coordinates; the mod loads them around
+                         the player (world.json "tiles": kind, file and bounds of each)
+    lod/<tile>.lcum      the game's low-detail version of the tile (*_ULD), drawn beyond the detail radius
+    sky_<time>.lcum      sky dome, centred on the camera
     textures/<id>.png    decoded textures
-    collision.bin        solid voxels per chunk (the mod turns them into barrier blocks)
-    lighting.json        sun, sky, fog and post-effect values from LEGO_CITY_NOON_LIGHTING.LED
-    world.json           scale, origin, spawn
+    collision_mesh.bin   collision triangles grouped in REGION x REGION columns (collision_props.bin: LEGO props)
+    collision.bin        voxels of the barrier blocks old versions placed (the mod removes them)
+    lighting_<time>.json sun, sky, fog and post-effect values from LEGO_CITY_<TIME>_LIGHTING.LED
+    world.json           scale, origin, spawn, tiles
 """
 import glob
 import io
@@ -35,8 +38,11 @@ SLOT_DIFFUSE = 5          # UMTL 0xB2 localTID slot of the colour layer
 SLOT_NORMAL = 11          # UMTL 0xB2 localTID slot of the colour layer's normal map (tangent space)
 TID_BEFORE_NAME = 586     # UMTL 0xB2: localTID array starts this many bytes before the material name
 TINT_AFTER_TID = 341      # UMTL 0xB2: colour of the colour layer, B G R (A) bytes, this far after localTID
-EXCLUDE = ("_DRC_", "_ULD_", "_3DS_", "_TECH_", "NEW DIVIDE")  # Wii U pad, far LOD, 3DS, tech variants;
-# NEW DIVIDE: a mission-state copy of Little Italy tile 2416 that would cover the canal and roofs in white
+EXCLUDE = ("_DRC_", "_ULD_", "_3DS_", "_TECH_", "NEW DIVIDE", "_CUT", "-CHANGES", "ORIGINALRAMP", "NEW FLOOR",
+           "ULD_BRIDGE")
+# Wii U pad, far LOD (read apart, see ULD), 3DS, tech variants; then other copies of tiles that already exist:
+# NEW DIVIDE (Little Italy 2416, would cover the canal and roofs in white), *_CUT (cutscene copies, same bounds),
+# -CHANGES / ORIGINALRAMP / NEW FLOOR (mission states) and ULD_BRIDGE (a far version among the full tiles)
 
 CITY = os.path.join("LEVELS", "LEGO_CITY", "LEGO_CITY")
 HELPER = "#helper"           # draw id of helper meshes: collision only, never rendered
@@ -436,17 +442,6 @@ FOLIAGE_WORDS = ("leaf", "leaves", "bush", "plant", "ivy", "fern", "palm", "flow
                  "treeclump", "tree_leaves", "curlys")
 
 
-def write_collision_mesh(path, tris):
-    """'LCUT' u32 version u32 count, then count x 9 float32 (three corners, Minecraft coordinates). Degenerate
-    triangles (area ~0) are left out."""
-    t = np.concatenate(tris).astype(np.float32)
-    area = np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
-    t = t[area > 1e-6]
-    with open(path, "wb") as f:
-        f.write(b"LCUT" + struct.pack("<II", 1, len(t)))
-        f.write(t.astype("<f4").tobytes())
-
-
 SEA_WORDS = ("bm_sea", "waterfoaming", "seaweed_boundary", "tidefoam")  # sea plane + shoreline decals
 SEA_Y = ORIGIN_Y + 0.35 * SCALE   # the game's sea plane: game y ~0.35 -> Minecraft Y ~65.4
 SEA_MARGIN = 160.0                # blocks of sea kept around the district
@@ -455,6 +450,9 @@ WATER_SURFACE = 64 + 8 / 9        # top of a Minecraft water source at Y 64
 SEA_RGB = np.array([0.19, 0.24, 0.24])  # replaced by bm_sea02's average when the sea is exported
 SEA_ALPHA = 215                    # the game's water surface over Minecraft's water: mostly opaque
 SEA_LIGHT = 1.0                    # vertex light of the water surface (2.0 after the HDR doubling)
+SEA_REACH = 4000.0                 # blocks of open sea drawn around the city
+SEA_CELL = 256.0                   # grid size of that sea
+SEA_UV_BLOCKS = 72.0               # the game's sea texture repeats every ~72 blocks
 
 
 def write_collision(path, vox):
@@ -538,7 +536,14 @@ def export_lighting(city, out_dir):
 
 
 # ---------------------------------------------------------------------------
-AREAS = ("SF_RESIDENTIAL", "NY_LITTLE_ITALY")  # districts, each where the game has it (same world shift)
+# every district of the city, each where the game has it (one world shift); the first two were the whole map
+# until v1.0, so they keep their place in front
+AREAS = ("SF_RESIDENTIAL", "NY_LITTLE_ITALY", "SF_DOCKS", "NY_CHINATOWN", "NY_DOWNTOWN", "NY_DOWNTOWN_EAST",
+         "NY_DOWNTOWN_WEST", "NY_TIMES_SQUARE", "NY_UPTOWN", "NY_CENTRAL_PARK", "NY_CANAL", "NY_BEACH", "NY_AIRPORT",
+         "NY_TUNNEL", "NY_MONACO_TUNNEL", "WI_FARMLANDS", "WI_FOREST", "IS_LIBERTY_ISLAND", "IS_PRISON_ISLAND",
+         "IS_SPACE_CENTRE", "BR_GOLDEN_GATE", "BR_BROOKLYN_BRIDGE", "BR_TWIN_BRIDGE", "MOUNTAINS")
+ULD = "_ULD_"             # the game's own far-away version of a tile: the mod draws it beyond the detail radius
+REGION = 128              # blocks: collision_mesh.bin is cut into REGION x REGION columns the mod loads on demand
 
 
 def in_boxes(c, boxes):
@@ -549,76 +554,187 @@ def in_boxes(c, boxes):
     return ok
 
 
+class CollisionWriter:
+    """Collects collision triangles on disk (the whole city has tens of millions) and writes them grouped by REGION
+    column: 'LCUT' u32 version 2, u32 region size, u32 regions, per region (i32 rx, i32 rz, u32 first, u32 count),
+    then the triangles (9 float32: three corners, Minecraft coordinates) region by region. A triangle that spans
+    several columns is stored in each. Degenerate triangles (area ~0) are left out."""
+
+    def __init__(self, path):
+        self.path = path
+        self.tri = open(path + ".tri.tmp", "wb")
+        self.key = open(path + ".key.tmp", "wb")
+        self.count = 0
+
+    def add(self, t):
+        t = np.asarray(t, dtype=np.float32).reshape(-1, 3, 3)
+        if len(t) == 0:
+            return
+        area = np.linalg.norm(np.cross(t[:, 1] - t[:, 0], t[:, 2] - t[:, 0]), axis=1)
+        t = t[area > 1e-6]
+        if len(t) == 0:
+            return
+        lo = np.floor(t[:, :, [0, 2]].min(1) / REGION).astype(np.int64)
+        hi = np.floor(t[:, :, [0, 2]].max(1) / REGION).astype(np.int64)
+        for dx in range(int((hi[:, 0] - lo[:, 0]).max()) + 1):
+            for dz in range(int((hi[:, 1] - lo[:, 1]).max()) + 1):
+                ok = (lo[:, 0] + dx <= hi[:, 0]) & (lo[:, 1] + dz <= hi[:, 1])
+                rx, rz = lo[ok, 0] + dx, lo[ok, 1] + dz
+                self.tri.write(t[ok].astype("<f4").tobytes())
+                self.key.write(((rx << 32) | (rz & 0xFFFFFFFF)).astype("<i8").tobytes())
+                self.count += int(ok.sum())
+
+    def close(self):
+        self.tri.close()
+        self.key.close()
+        n = self.count
+        keys = np.fromfile(self.path + ".key.tmp", "<i8")
+        order = np.argsort(keys, kind="stable")
+        keys = keys[order]
+        starts = np.r_[0, np.flatnonzero(keys[1:] != keys[:-1]) + 1].astype(np.int64) if n else np.zeros(0, np.int64)
+        ends = np.r_[starts[1:], n]
+        with open(self.path, "wb") as f:
+            f.write(b"LCUT" + struct.pack("<III", 2, REGION, len(starts)))
+            for s, e in zip(starts, ends):
+                k = int(keys[s])
+                rx, rz = k >> 32, (k & 0xFFFFFFFF) - (1 << 32 if k & 0x80000000 else 0)
+                f.write(struct.pack("<iiII", rx, rz, int(s), int(e - s)))
+            if n:
+                tri = np.memmap(self.path + ".tri.tmp", "<f4", "r", shape=(n, 9))
+                for c in range(0, n, 1 << 20):
+                    f.write(np.ascontiguousarray(tri[order[c:c + (1 << 20)]]).tobytes())
+                del tri
+        os.remove(self.path + ".tri.tmp")
+        os.remove(self.path + ".key.tmp")
+        return n
+
+
+def solid(tid):
+    """Foliage and glows stay walk-through, as in the game."""
+    colour, _, mode = tid.partition("#")
+    return not is_glow(tid) and not (mode == "cutout" and any(
+        w in TEX_NAMES.get(colour.split("+")[0], "") for w in FOLIAGE_WORDS))
+
+
+def bounds(draws):
+    """[x0, y0, z0, x1, y1, z1] of the vertices the draws use."""
+    pts = np.concatenate([pos[np.unique(idx)] for _, pos, _, _, _, idx in draws])
+    return [round(float(v), 2) for v in np.r_[pts.min(0), pts.max(0)]]
+
+
 def main(game, out, shaderpack=None):
     city = os.path.join(game, CITY)
     os.makedirs(os.path.join(out, "meshes"), exist_ok=True)
+    os.makedirs(os.path.join(out, "lod"), exist_ok=True)
     texdir = os.path.join(out, "textures")
     os.makedirs(texdir, exist_ok=True)
     Image.new("RGB", (4, 4), (255, 255, 255)).save(os.path.join(texdir, "white.png"))
+    for old in glob.glob(os.path.join(out, "meshes", "*.lcum")) + glob.glob(os.path.join(out, "lod", "*.lcum")):
+        os.remove(old)  # a re-conversion must not leave tiles of an older version behind
     shared = SharedTextures(city)
     print("shared textures:", len(shared.spans))
 
+    import export_gizprops
     import export_parkour
     import export_props
-    per_file, boxes, tiles = {"zz_props": [], "parkour": []}, [], []
-    margin = 40 * SCALE
-    for name in AREAS:
-        area = os.path.join(city, name)
-        files = sorted(f for f in glob.glob(os.path.join(area, "**", "*_DX11.GSC"), recursive=True)
-                       if not any(x in os.path.basename(f).upper() for x in EXCLUDE))
-        area_draws = {os.path.basename(f)[:-len("_DX11.GSC")].lower(): export_gsc(f, shared, np.zeros(3), texdir)
-                      for f in files}
-        per_file.update(area_draws)
-        area_tiles = sorted({os.path.dirname(f) for f in files})
-        tiles += area_tiles
-        # city props (lamp posts, benches, trees, signs, playground...) placed by the tiles' *_GZ2.LED
-        per_file["zz_props"] += export_props.export_props(game, shared, texdir, area_tiles)
-        # a few draws sit kilometres away from the district (props parked far off): keep what lies inside the
-        # 1st..99th percentile box of the district's draw centres plus a margin
-        cen = np.array([d[1].mean(0) for ds in area_draws.values() for d in ds])
-        boxes.append((np.percentile(cen, 1, axis=0) - margin, np.percentile(cen, 99, axis=0) + margin))
-        print(name, len(files), "tiles, box", boxes[-1][0].round(), boxes[-1][1].round())
-    # LEGO objects the tiles place as gizmos (tables, nets, catapults...): with the props, so they switch off too
-    import export_gizprops
     gizlib = export_gizprops.Library(game, shared, texdir)
-    per_file["zz_props"] += export_gizprops.export_gizprops(gizlib, tiles)
-    # the blue-and-white free-running pieces; the climbable ones also go to climb.json
-    per_file["parkour"], climbs = export_parkour.export_parkour(game, shared, texdir, tiles)
-    lo = np.min([b[0] for b in boxes], axis=0) + margin
-    hi = np.max([b[1] for b in boxes], axis=0) - margin
-    # world origin: centre of the kept draws on X/Z 0/0, game y 0 on Y 64
-    # fixed since v0.1: saved worlds store barrier blocks at these coordinates, so the origin must never drift
-    # (the percentile box above moves by a block when lightmap subdivision changes the draw centres)
+    margin = 40 * SCALE
+    # world origin: fixed since v0.1 (Cherry Tree Hills centred on 0/0), so re-converting never moves the city
     shift = np.array(WORLD_SHIFT, dtype=float)
-    print("draw box", lo.round(), hi.round(), "shift", shift)
+    coll = CollisionWriter(os.path.join(out, "collision_mesh.bin"))
+    props_coll = CollisionWriter(os.path.join(out, "collision_props.bin"))
+    boxes, legacy, manifest, climbs = [], [], [], []
+    dropped = helpers = 0
 
-    tris, prop_tris, legacy, manifest, dropped, helpers = [], [], [], [], 0, 0
-    for name, ds in per_file.items():
+    def write_tile(name, draws, box, kind, folder="meshes", collide=True, interior=False, placed=False, **extra):
+        """Keeps the draws inside box (per triangle: some parts carry triangles kilometres away), moves them to the
+        world (unless placed: already in world coordinates), adds their collision and writes them as one .lcum.
+        Returns the manifest entry, or None if nothing is left."""
+        nonlocal dropped, helpers
         kept = []
-        for tid, pos, uv, col, nrm, idx in ds:
-            # per triangle as well: some parts carry a cluster of triangles kilometres away (tile 0820)
-            c = pos[idx].mean(1)
-            ok = in_boxes(c, boxes)
-            dropped += int((~ok).sum())
-            idx = idx[ok]
+        for tid, pos, uv, col, nrm, idx in draws:
+            if box is not None:
+                ok = in_boxes(pos[idx].mean(1), [box])
+                dropped += int((~ok).sum())
+                idx = idx[ok]
             if len(idx) == 0:
                 continue
-            pos = pos + shift
-            colour, _, mode = tid.partition("#")
+            if not placed:
+                pos = pos + shift
+            if collide and solid(tid):
+                (props_coll if kind == "props" else coll).add(pos[idx])
             if name.startswith("sf_residential"):
                 legacy.append(pos[idx])  # barriers of old versions were only ever placed in Cherry Tree Hills
-            if not is_glow(tid) and not (mode == "cutout" and any(w in TEX_NAMES.get(colour.split("+")[0], "") for w in FOLIAGE_WORDS)):
-                # foliage and glows stay walk-through, as in the game; props apart so the mod can switch them off
-                (prop_tris if name == "zz_props" else tris).append(pos[idx])
             if tid == HELPER:
                 helpers += len(idx)
                 continue
             kept.append((tid, pos, uv, col, nrm, idx))
+        if not kept:
+            return None
         batches = batch(kept)
-        write_lcum(os.path.join(out, "meshes", name + ".lcum"), batches)
-        nv = sum(b[5] for b in batches.values())
-        manifest.append({"name": name, "batches": len(batches), "vertices": int(nv)})
-        print(f"{name}: {len(batches)} batches, {nv} vertices")
+        write_lcum(os.path.join(out, folder, name + ".lcum"), batches, interior=interior)
+        entry = {"name": name, "kind": kind, "file": folder + "/" + name + ".lcum", "bounds": bounds(kept),
+                 "batches": len(batches), "vertices": int(sum(b[5] for b in batches.values())), **extra}
+        manifest.append(entry)
+        return entry
+
+    for area_name in AREAS:
+        area = os.path.join(city, area_name)
+        every = sorted(glob.glob(os.path.join(area, "**", "*_DX11.GSC"), recursive=True))
+        files = [f for f in every if not any(x in os.path.basename(f).upper() for x in EXCLUDE)]
+        if not files:
+            print(area_name, "not found, skipped")
+            continue
+        area_draws = {}
+        for f in files:
+            try:
+                area_draws[os.path.basename(f)[:-len("_DX11.GSC")].lower()] = export_gsc(f, shared, np.zeros(3), texdir)
+            except Exception as ex:  # one unreadable tile must not stop the whole city
+                print(f"  tile {os.path.basename(f)} skipped: {ex}")
+        area_tiles = sorted({os.path.dirname(f) for f in files})
+        # a few draws sit kilometres away from the district (props parked far off): keep what lies inside the
+        # 1st..99th percentile box of the district's draw centres plus a margin
+        cen = np.array([d[1].mean(0) for ds in area_draws.values() for d in ds])
+        if len(cen) == 0:
+            print(area_name, "has no geometry, skipped")
+            continue
+        box = (np.percentile(cen, 1, axis=0) - margin, np.percentile(cen, 99, axis=0) + margin)
+        boxes.append(box)
+        written = {name for name, draws in area_draws.items()
+                   if write_tile(name, draws, box, "city", district=area_name) is not None}
+        n_tiles = len(written)
+        del area_draws
+        # the game's own low-detail version of each tile (<tile>_ULD), drawn by the mod beyond the detail radius
+        n_lod = 0
+        for f in every:
+            base = os.path.basename(f)[:-len("_DX11.GSC")]
+            up = base.upper() + "_"
+            if ULD not in up or any(x in up for x in EXCLUDE if x != ULD):
+                continue
+            name = re.sub("_uld", "", base.lower())
+            # the far version of a tile (<tile>_ULD) or of one landmark on it (<tile>_FWHEEL_ULD, the Ferris wheel);
+            # district-wide ones (<DISTRICT>_ULD) would lie over the tiles' own, some with data in their colours
+            m = re.match(r"(.+_\d{4})(_|$)", name)
+            owner = name if name in written else m.group(1) if m and m.group(1) in written else None
+            if owner is None:
+                continue
+            try:
+                draws = export_gsc(f, shared, np.zeros(3), texdir)
+            except Exception as ex:
+                print("  far version", base, "skipped:", ex)
+                continue
+            n_lod += write_tile(name, draws, box, "lod", folder="lod", collide=False, district=area_name,
+                                tile=owner) is not None
+        # city props (lamp posts, benches, trees, signs, playground...) placed by the tiles' *_GZ2.LED, and the LEGO
+        # objects the tiles place as gizmos (tables, nets, catapults...): together, so they switch off together
+        props = export_props.export_props(game, shared, texdir, area_tiles)
+        props += export_gizprops.export_gizprops(gizlib, area_tiles)
+        write_tile("zz_props_" + area_name.lower(), props, box, "props", district=area_name)
+        # the blue-and-white free-running pieces; the climbable ones also go to climb.json
+        parkour, area_climbs = export_parkour.export_parkour(game, shared, texdir, area_tiles)
+        write_tile("parkour_" + area_name.lower(), parkour, box, "city", district=area_name)
+        climbs += area_climbs
+        print(f"{area_name}: {n_tiles} tiles, {n_lod} far versions, box {box[0].round()} {box[1].round()}")
     print("dropped far triangles:", dropped, "- helper triangles (collision only):", helpers)
     json.dump([[round(float(v), 2) for v in np.r_[a + shift, b + shift]] for a, b in climbs],
               open(os.path.join(out, "climb.json"), "w"))
@@ -628,18 +744,7 @@ def main(game, out, shaderpack=None):
     sites = []
     for site, rooms in export_police.export_interiors(game, shared, texdir, gizlib):
         for fid, draws in rooms:
-            kept = []
-            for tid, pos, uv, col, nrm, idx in draws:
-                colour, _, mode = tid.partition("#")
-                if not is_glow(tid) and not (mode == "cutout" and any(w in TEX_NAMES.get(colour.split("+")[0], "") for w in FOLIAGE_WORDS)):
-                    tris.append(pos[idx])
-                if tid != HELPER:
-                    kept.append((tid, pos, uv, col, nrm, idx))
-            batches = batch(kept)
-            name = f"interior_{site['id']}_{fid}"
-            write_lcum(os.path.join(out, "meshes", name + ".lcum"), batches, interior=True)
-            manifest.append({"name": name, "batches": len(batches),
-                             "vertices": int(sum(b[5] for b in batches.values()))})
+            write_tile(f"interior_{site['id']}_{fid}", draws, None, "city", interior=True, placed=True)
         sites.append(site)
     json.dump({"sites": sites}, open(os.path.join(out, "interiors.json"), "w"), indent=1)
     for old in glob.glob(os.path.join(out, "meshes", "police_*.lcum")) + [os.path.join(out, "police.json")]:
@@ -657,13 +762,12 @@ def main(game, out, shaderpack=None):
 
     # the mod collides against the triangles themselves (collision_mesh.bin); the voxels are only kept so it can
     # remove the barrier blocks that versions before 0.4 placed in existing worlds
-    write_collision_mesh(os.path.join(out, "collision_mesh.bin"), tris)
-    write_collision_mesh(os.path.join(out, "collision_props.bin"), prop_tris or [np.zeros((0, 3, 3))])
+    n_coll = coll.close()
+    props_coll.close()
     vox = voxelize(legacy)  # all geometry, like the barriers were placed (foliage included)
 
     # the sea: LEGO_CITY_DX11.GSC has one plane (bm_sea02) at game height ~0.35 plus shoreline foam and seaweed
-    # edges; keep what lies around the district at sea level
-    # around each district, not the empty sea between them
+    # edges; keep what lies around the districts at sea level (the mod draws it at any distance)
     sea_boxes = [((a + shift)[[0, 2]] - SEA_MARGIN + margin, (b + shift)[[0, 2]] + SEA_MARGIN - margin) for a, b in boxes]
     sea = []
     for tid, pos, uv, col, nrm, idx in export_gsc(os.path.join(city, "LEGO_CITY_DX11.GSC"), shared, np.zeros(3), texdir):
@@ -683,15 +787,6 @@ def main(game, out, shaderpack=None):
             a[:, :, 3] = SEA_ALPHA
             Image.fromarray(a, "RGBA").save(os.path.join(texdir, "lcu_sea.png"))
             TEX_NAMES["lcu_sea"] = "lcu_sea"
-            pos = pos + shift
-            c = pos[idx].mean(1)
-            ok = in_boxes(c[:, [0, 2]], sea_boxes) & (np.abs(c[:, 1] - SEA_Y) < 1.5)
-            if ok.any():
-                pos[:, 1] = WATER_SURFACE + 0.02
-                # the game colours its sea in the sea shader, the plane's vertex colours are near black:
-                # neutral light (stored halved, see export_gsc) so the sea texture shows as it is
-                col = np.full_like(col, SEA_LIGHT)
-                sea.append(("lcu_sea#translucent", pos, uv, col, nrm, idx[ok]))
             continue
         pos = pos + shift
         pos[:, 1] = np.where(np.abs(pos[:, 1] - SEA_Y) < 1.5, WATER_SURFACE + 0.05, pos[:, 1])  # foam on the water
@@ -699,10 +794,24 @@ def main(game, out, shaderpack=None):
         ok = in_boxes(c[:, [0, 2]], sea_boxes) & (np.abs(c[:, 1] - SEA_Y) < 1.5)
         if ok.any():
             sea.append((tid, pos, uv, col, nrm, idx[ok]))
-    write_lcum(os.path.join(out, "meshes", "zz_sea.lcum"), batch(sea))
+    # the open sea: the game's plane has holes and long fan triangles, so one even grid of its texture instead,
+    # around the whole city and far beyond (land and shores lie above it)
+    lo = np.min([b[0] for b in boxes], axis=0) + shift - SEA_REACH
+    hi = np.max([b[1] for b in boxes], axis=0) + shift + SEA_REACH
+    xs = np.arange(lo[0], hi[0] + SEA_CELL, SEA_CELL)
+    zs = np.arange(lo[2], hi[2] + SEA_CELL, SEA_CELL)
+    gx, gz = np.meshgrid(xs, zs)
+    pos = np.c_[gx.ravel(), np.full(gx.size, WATER_SURFACE + 0.02), gz.ravel()]
+    uv = np.c_[pos[:, 2] / SEA_UV_BLOCKS, -pos[:, 0] / SEA_UV_BLOCKS]   # the game's own scale and direction
+    nx, nz = len(xs), len(zs)
+    q = (np.arange(nz - 1)[:, None] * nx + np.arange(nx - 1)[None, :]).ravel()
+    idx = np.r_[np.c_[q, q + nx, q + 1], np.c_[q + 1, q + nx, q + nx + 1]].reshape(-1, 3)
+    sea.append(("lcu_sea#translucent", pos, uv, np.full((len(pos), 3), SEA_LIGHT), np.tile([0.0, 1.0, 0.0], (len(pos), 1)),
+                idx))
+    write_tile("zz_sea", sea, None, "always", collide=False, placed=True)
     print(f"sea: {len(sea)} draws, {sum(len(s[5]) for s in sea)} triangles")
     write_collision(os.path.join(out, "collision.bin"), vox)
-    print("collision triangles:", sum(len(t) for t in tris), "- legacy barrier voxels:", len(vox))
+    print("collision triangles:", n_coll, "- legacy barrier voxels:", len(vox))
 
     # spawn: highest solid voxel in the column nearest the centre
     near = vox[np.argmin(np.abs(vox[:, 0]) + np.abs(vox[:, 2]))]

@@ -146,7 +146,7 @@ def create_vanilla_profile(game_dir, icon_png=None, mc_dir=VANILLA, log=print):
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     entry = data.setdefault("profiles", {}).get(PROFILE_ID, {})
     entry.update({"name": PROFILE_NAME, "type": "custom", "lastVersionId": vid, "gameDir": game_dir,
-                  "javaArgs": "-Xmx4G -XX:+UseG1GC -XX:+UnlockExperimentalVMOptions -XX:MaxGCPauseMillis=50",
+                  "javaArgs": "-Xmx8G -XX:+UseG1GC -XX:+UnlockExperimentalVMOptions -XX:MaxGCPauseMillis=50",
                   "lastUsed": now})
     entry.setdefault("created", now)
     if icon_png and os.path.isfile(icon_png):

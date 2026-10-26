@@ -3,6 +3,8 @@
 #define BLOOM 1.0 // [0.0 0.5 1.0 1.5 2.0]
 #define EXPOSURE 1.0 // [0.6 0.8 1.0 1.2 1.4]
 #define FOG_AMOUNT 1.0 // [0.0 0.5 1.0 1.5 2.0]
+// the haze thickens towards the far side of the city (5000 blocks), so the low-detail districts stay in sight
+#define LCU_FAR_FOG 5000.0
 #define NORMAL_MAPS 1 // [0 1]
 #define NORMAL_STRENGTH 0.75 // [0.5 0.75 1.0 1.5 2.0]
 #define NORMAL_FLIP_Y 1 // [0 1]

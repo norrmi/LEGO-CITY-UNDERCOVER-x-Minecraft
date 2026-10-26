@@ -188,7 +188,8 @@ class App:
         self.bar.configure(mode="determinate", value=100 if ok else 0)
         if ok:
             where = ("Start the Minecraft Launcher and play the profile\n'" + launchers.PROFILE_NAME + "'."
-                     if info else "Start the instance in your launcher.")
+                     if info else "In your launcher, give the instance 8 GB of memory (the whole city needs it)\n"
+                     "and start it.")
             self.write("\nDone.\n")
             messagebox.showinfo(TITLE, "Installed!\n\n" + where + "\nOpen the world '" + install.WORLD
                                 + "'. For shaders pick " + install.PACK

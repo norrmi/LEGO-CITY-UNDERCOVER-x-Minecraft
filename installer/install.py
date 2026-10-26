@@ -5,8 +5,9 @@
 LCU-Installer.exe (gui.py) runs the same steps with a window. Everything the mod shows is converted here, on your
 PC, from your own copy of LEGO City Undercover; nothing from the game is shipped with this project. Steps:
   1. copies the shader pack to <instance>/shaderpacks/LCU_CherryTreeHills
-  2. converts the game's Cherry Tree Hills and Little Italy, the police station, the ice cream parlour, the sky,
-     lighting, sounds and cars into <instance>/lcu_data (converter/); the pack's lighting constants come from here
+  2. converts every district of LEGO City (and the game's own far-away versions of them), the police station, the
+     ice cream parlour, the sky, lighting, sounds and cars into <instance>/lcu_data (converter/); the pack's
+     lighting constants come from here
   3. copies the mod (dist/lcucraft-*.jar, Fabric API inside) to <instance>/mods, replacing an older version, and
      with --extras downloads Sodium and Iris for 1.18.2 if they are missing
   4. creates the world "Cherry Tree Hills" in <instance>/saves (only if it does not exist yet)
@@ -99,7 +100,7 @@ def install(game, instance, convert=True, extras=False, log=print):
     shutil.copytree(os.path.join(ROOT, "shaderpack", PACK), pack)
 
     if convert:
-        log(f"2/4 converting the game (a few minutes, ~1 GB) -> {data}")
+        log(f"2/4 converting the whole city (about 7 minutes, ~5 GB) -> {data}")
         import export_audio
         import export_lcu
         os.makedirs(data, exist_ok=True)
@@ -141,7 +142,8 @@ def main():
         install(a.game, a.instance, convert=not a.skip_convert, extras=a.extras)
     except InstallError as e:
         sys.exit(str(e))
-    print("\nDone. Start the instance, open the world", repr(WORLD) + ", and pick the shader pack", PACK,
+    print("\nDone. Give the instance 8 GB of memory (the whole city needs it), start it, open the world",
+          repr(WORLD) + ", and pick the shader pack", PACK,
           "under Options > Video Settings > Shader Packs if you use Iris.")
 
 

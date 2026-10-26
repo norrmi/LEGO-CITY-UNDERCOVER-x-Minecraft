@@ -1,11 +1,14 @@
 package dev.lcucraft.client;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.lcucraft.LcuCraft;
 import dev.lcucraft.LcuData;
 import dev.lcucraft.TimeOfDay;
+import dev.lcucraft.client.mixin.VertexBufferAccessor;
 import net.fabricmc.fabric.api.client.rendering.v1.WorldRenderContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.VertexBuffer;
@@ -23,13 +26,16 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Matrix4f;
 import net.minecraft.util.math.Vec3d;
+import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -38,7 +44,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Stream;
 
 /**
- * Draws the converted Cherry Tree Hills meshes and the LCU sky for the current time of day (DAWN, NOON, DUSK).
+ * Draws the converted LEGO City meshes and the LCU sky for the current time of day (DAWN, NOON, DUSK).
+ *
+ * The city is a list of tiles (world.json "tiles", export_lcu.py). Tiles within the map detail radius
+ * (LCUxMinecraft Settings, 2000 blocks by default) are read from disk and put on the GPU nearest first, and freed
+ * again once left far behind; everywhere else the game's own low-detail version of the tile (lod/) is drawn, so the
+ * whole city stays in sight. LEGO props have their own, smaller radius.
  *
  * Mesh colours are stored halved (vertex alpha 128) so the game's light can go above 1. Without a shader pack the
  * meshes use Minecraft's entity cut-out shader with zero normals, which makes its fixed lighting a constant 0.4; a
@@ -47,9 +58,16 @@ import java.util.stream.Stream;
  */
 public final class LcuRenderer {
 	private static final int LIGHT = 0xF000F0;
-	private static final int UPLOADS_PER_FRAME = 24;
+	/** indices put on the GPU per frame at most, so loading tiles while moving does not freeze the game */
+	private static final int UPLOAD_BUDGET = 600_000;
+	/** tiles read from disk at the same time */
+	private static final int READS = 2;
 	/** sky geometry radius in its own units (the NOON dome is ~5600 across) */
 	private static final float SKY_RADIUS = 5600f;
+	/** the camera's far plane in a LEGO City world (GameRendererMixin): the whole city, ~4000 blocks across */
+	public static final float FAR_PLANE = 8192f;
+	/** where the fog becomes thick (BackgroundRendererMixin, LCU_FAR_FOG in the shader pack): beyond the city */
+	public static final float FAR_FOG = 5000f;
 	/** fixed stand-in for the game's auto exposure, same value as LCU_EXPOSURE in the shader pack (export_lcu.py) */
 	private static final float EXPOSURE = 0.55f;
 
@@ -67,25 +85,53 @@ public final class LcuRenderer {
 		final List<GpuBatch> sky = new ArrayList<>();
 	}
 
-	/** converted LEGO props (export_props.py): the only part limited by the load radius */
-	private static final String PROPS_FILE = "zz_props.lcum";
-	/** cpu[propStart..] are the props, cut into columns; everything before is the city, always loaded */
-	private volatile int propStart = Integer.MAX_VALUE;
+	enum Kind {
+		/** full detail, within the map detail radius */
+		CITY,
+		/** the game's low-detail version of a CITY tile, drawn while that one is not on the GPU */
+		LOD,
+		/** LEGO props: cut into columns, within the LEGO objects radius */
+		PROPS,
+		/** always loaded (the sea) */
+		ALWAYS
+	}
+
+	/** One converted .lcum file and its state. */
+	private static final class Tile {
+		final String name;
+		final Path file;
+		final Kind kind;
+		/** null until read when world.json has no bounds (data converted by v1.0) */
+		Box bounds;
+		CompletableFuture<List<Lcum.Batch>> reading;
+		/** read, not all on the GPU yet (PROPS: all columns, kept while the tile is loaded) */
+		List<Lcum.Batch> cpu;
+		/** GPU copies; for PROPS one slot per column of cpu, null while outside the radius */
+		final List<GpuBatch> gpu = new ArrayList<>();
+		boolean ready;
+
+		Tile(String name, Path file, Kind kind, Box bounds) {
+			this.name = name;
+			this.file = file;
+			this.kind = kind;
+			this.bounds = bounds;
+		}
+	}
+
 	/** columns the props are cut into for loading around the player (Lcum.split) */
 	private static final float CELL = 48f;
-	/** loaded pieces stay on the GPU until this far beyond the radius, so walking along the edge does not reload */
+	/** loaded pieces stay on the GPU until this far beyond their radius, so walking along the edge does not reload */
 	private static final double UNLOAD_MARGIN = 64;
-	private final List<Lcum.Batch> cpu = new ArrayList<>();
-	/** GPU copy of cpu[i], or null while it is outside the load radius */
-	private GpuBatch[] slots = new GpuBatch[0];
+	private final List<Tile> tiles = new ArrayList<>();
+	/** tiles that should be loaded but are not on the GPU yet */
 	private int missing = 1;
-	/** where and with which radius the pieces were last checked against the load radius */
+	/** where and with which radii the tiles were last checked */
 	private Vec3d lastScan;
-	private double lastRadius;
+	private double lastRadius, lastMapRadius;
 	private static final double RESCAN = 4;
 	private final Map<TimeOfDay, Light> lights = new EnumMap<>(TimeOfDay.class);
 	private final Set<String> textures = new HashSet<>();
-	private CompletableFuture<List<Lcum.Batch>> loading;
+	private boolean loaded;
 	private boolean uploadedWithNormals;
 	private boolean skyBuilt;
 	private BufferBuilder builder;
@@ -101,12 +147,12 @@ public final class LcuRenderer {
 		}
 	}
 
-	/** All batches are on the GPU. */
+	/** Everything that should be on the GPU around the camera is there. */
 	public boolean uploaded() {
-		return loading != null && !cpu.isEmpty() && missing == 0 && skyBuilt;
+		return loaded && missing == 0 && skyBuilt;
 	}
 
-	/** Starts reading the converted files in the background. */
+	/** Reads the tile list and the skies; the meshes follow around the player while playing. */
 	public void load() {
 		unload();
 		Path dir = LcuData.dir();
@@ -123,42 +169,80 @@ public final class LcuRenderer {
 				if (j.has("grade")) {
 					l.grade = floats(j.getAsJsonArray("grade"));
 				}
+				Path sky = dir.resolve(t.skyFile());
+				l.skyCpu = Lcum.read(Files.exists(sky) ? sky : dir.resolve("sky.lcum"));
 			} catch (Exception e) {
-				LcuCraft.LOG.warn("lighting for {} missing, using defaults", t, e);
+				LcuCraft.LOG.warn("lighting or sky for {} missing, using defaults", t, e);
 			}
 		}
 		trains.load(dir);
-		loading = CompletableFuture.supplyAsync(() -> {
-			List<Lcum.Batch> all = new ArrayList<>();
+		try {
+			readTiles(dir);
+		} catch (Exception e) {
+			LcuCraft.LOG.error("Could not read the tile list from {}", dir, e);
+		}
+		loaded = true;
+		LcuCraft.LOG.info("LEGO City: {} tiles ({} far versions)", tiles.size(),
+				tiles.stream().filter(t -> t.kind == Kind.LOD).count());
+	}
+
+	/** world.json "tiles" (kind, file, bounds); data from v1.0 has none of that, then every mesh file is loaded. */
+	private void readTiles(Path dir) throws Exception {
+		JsonArray list = LcuData.json("world.json").getAsJsonArray("tiles");
+		boolean v11 = list != null && list.size() > 0 && list.get(0).getAsJsonObject().has("file");
+		if (!v11) {
 			try (Stream<Path> files = Files.list(dir.resolve("meshes"))) {
-				List<Lcum.Batch> props = new ArrayList<>();
 				for (Path f : files.filter(p -> p.toString().endsWith(".lcum")).sorted().toList()) {
-					(f.getFileName().toString().equals(PROPS_FILE) ? props : all).addAll(Lcum.read(f));
+					String name = f.getFileName().toString().replace(".lcum", "");
+					tiles.add(new Tile(name, f, name.startsWith("zz_props") ? Kind.PROPS : Kind.ALWAYS, null));
 				}
-				propStart = all.size();
-				all.addAll(Lcum.split(props, CELL));
-				for (TimeOfDay t : TimeOfDay.values()) {
-					Path sky = dir.resolve(t.skyFile());
-					lights.get(t).skyCpu = Lcum.read(Files.exists(sky) ? sky : dir.resolve("sky.lcum"));
-				}
-			} catch (Exception e) {
-				throw new RuntimeException("Could not read converted meshes from " + dir, e);
 			}
-			return all;
+			return;
+		}
+		Map<String, Tile> city = new HashMap<>();
+		Map<Tile, String> lods = new HashMap<>();
+		for (JsonElement e : list) {
+			JsonObject o = e.getAsJsonObject();
+			float[] b = new float[6];
+			JsonArray a = o.getAsJsonArray("bounds");
+			for (int i = 0; i < 6; i++) {
+				b[i] = a.get(i).getAsFloat();
+			}
+			Kind kind = switch (o.get("kind").getAsString()) {
+				case "lod" -> Kind.LOD;
+				case "props" -> Kind.PROPS;
+				case "always" -> Kind.ALWAYS;
+				default -> Kind.CITY;
+			};
+			Tile t = new Tile(o.get("name").getAsString(), dir.resolve(o.get("file").getAsString()), kind,
+					new Box(b[0], b[1], b[2], b[3], b[4], b[5]));
+			tiles.add(t);
+			if (kind == Kind.CITY) {
+				city.put(t.name, t);
+			} else if (kind == Kind.LOD) {
+				// the tile it stands in for: its own name, or "tile" for a landmark's far version (Ferris wheel)
+				lods.put(t, o.has("tile") ? o.get("tile").getAsString() : t.name);
+			}
+		}
+		lods.forEach((l, owner) -> {
+			Tile c = city.get(owner);
+			if (c != null) {
+				fullOf.put(l, c);
+			}
 		});
 	}
 
 	public void unload() {
 		freeAll();
-		slots = new GpuBatch[0];
+		tiles.clear();
+		fullOf.clear();
 		for (Light l : lights.values()) {
 			l.sky.forEach(b -> b.buffer.close());
 			l.sky.clear();
 		}
-		cpu.clear();
 		missing = 1;
-		propStart = Integer.MAX_VALUE;
-		loading = null;
+		loaded = false;
+		lastScan = null;
 		skyBuilt = false;
 		trains.unload();
 		cars.unload();
@@ -196,27 +280,57 @@ public final class LcuRenderer {
 	}
 
 	private void freeAll() {
-		for (int i = 0; i < slots.length; i++) {
-			if (slots[i] != null) {
-				slots[i].buffer.close();
-				slots[i] = null;
-			}
+		for (Tile t : tiles) {
+			free(t);
 		}
 	}
 
-	/** Horizontal distance from the camera to a piece of the map (0 inside it). */
+	/** Takes a tile off the GPU and forgets its meshes (they are read again when it comes near). */
+	private static void free(Tile t) {
+		for (GpuBatch g : t.gpu) {
+			if (g != null) {
+				g.buffer.close();
+			}
+		}
+		t.gpu.clear();
+		t.cpu = null;
+		t.reading = null;
+		t.ready = false;
+	}
+
+	/** Horizontal distance from the camera to a box (0 inside it). */
+	private static double distance(Box b, Vec3d cam) {
+		double dx = Math.max(0, Math.max(b.minX - cam.x, cam.x - b.maxX));
+		double dz = Math.max(0, Math.max(b.minZ - cam.z, cam.z - b.maxZ));
+		return Math.sqrt(dx * dx + dz * dz);
+	}
+
 	private static double distance(Lcum.Batch b, Vec3d cam) {
 		double dx = Math.max(0, Math.max(b.minX() - cam.x, cam.x - b.maxX()));
 		double dz = Math.max(0, Math.max(b.minZ() - cam.z, cam.z - b.maxZ()));
 		return Math.sqrt(dx * dx + dz * dz);
 	}
 
+	/** How far from the camera a tile of this kind is loaded. */
+	private static double radius(Kind kind) {
+		return switch (kind) {
+			case CITY -> LcuSettings.mapRadius();
+			case PROPS -> LcuSettings.radius();
+			case LOD, ALWAYS -> Double.POSITIVE_INFINITY;
+		};
+	}
+
+	/** Whether the tile should be loaded with the camera here (always, for tiles whose bounds are not known yet). */
+	private static boolean wanted(Tile t, Vec3d cam, double margin) {
+		return t.bounds == null || distance(t.bounds, cam) <= radius(t.kind) + margin;
+	}
+
 	/**
-	 * Keeps the map within the load radius (LCUxMinecraft Settings) on the GPU: nearest pieces first, a few per
-	 * frame so moving does not freeze the game, and frees the ones left far behind.
+	 * Keeps the tiles around the camera on the GPU: starts reading the nearest missing ones from disk, uploads what
+	 * was read within the per-frame budget, and frees the ones left far behind.
 	 */
 	private void upload() {
-		if (loading == null) {
+		if (!loaded) {
 			return;
 		}
 		boolean normals = IrisCompat.shaderPackInUse();
@@ -225,69 +339,167 @@ public final class LcuRenderer {
 			lastScan = null;
 		}
 		uploadedWithNormals = normals;
-		if (cpu.isEmpty() && loading.isDone()) {
-			try {
-				cpu.addAll(loading.join());
-			} catch (Exception e) {
-				LcuCraft.LOG.error("Cherry Tree Hills meshes failed to load", e);
-				loading = CompletableFuture.completedFuture(List.of());
-				return;
-			}
-			slots = new GpuBatch[cpu.size()];
+		if (!skyBuilt) {
 			for (Light l : lights.values()) {
 				buildSky(l);
 			}
 			skyBuilt = true;
-			LcuCraft.LOG.info("Cherry Tree Hills: {} mesh batches", cpu.size());
-		}
-		if (cpu.isEmpty()) {
-			return;
 		}
 		Vec3d cam = MinecraftClient.getInstance().gameRenderer.getCamera().getPos();
+		boolean moved = lastScan == null || cam.squaredDistanceTo(lastScan) >= RESCAN * RESCAN
+				|| LcuSettings.radius() != lastRadius || LcuSettings.mapRadius() != lastMapRadius;
 		// nothing to do while everything near is loaded and the player has not moved a few blocks
-		if (missing == 0 && lastScan != null && cam.squaredDistanceTo(lastScan) < RESCAN * RESCAN
-				&& LcuSettings.radius() == lastRadius) {
+		if (missing == 0 && !moved) {
 			return;
 		}
-		lastScan = cam;
-		lastRadius = LcuSettings.radius();
-		List<Integer> want = new ArrayList<>();
-		double[] dist = new double[cpu.size()];
-		for (int i = 0; i < cpu.size(); i++) {
-			double radius = radius(i);
-			dist[i] = distance(cpu.get(i), cam);
-			if (slots[i] == null && dist[i] <= radius) {
-				want.add(i);
-			} else if (slots[i] != null && dist[i] > radius + UNLOAD_MARGIN) {
-				slots[i].buffer.close();
-				slots[i] = null;
+		if (moved) {
+			lastScan = cam;
+			lastRadius = LcuSettings.radius();
+			lastMapRadius = LcuSettings.mapRadius();
+		}
+		List<Tile> want = new ArrayList<>();
+		int reading = 0;
+		for (Tile t : tiles) {
+			boolean in = wanted(t, cam, 0);
+			boolean active = t.reading != null || t.cpu != null || !t.gpu.isEmpty();
+			if (active && !wanted(t, cam, UNLOAD_MARGIN)) {
+				free(t);
+			} else if (in && (!t.ready || t.kind == Kind.PROPS)) {
+				want.add(t);
+			}
+			if (t.reading != null && !t.reading.isDone()) {
+				reading++;
 			}
 		}
-		missing = want.size();
-		want.sort(Comparator.comparingDouble(i -> dist[i]));
-		for (int n = 0; n < UPLOADS_PER_FRAME && n < want.size(); n++) {
-			int i = want.get(n);
-			slots[i] = toGpu(cpu.get(i), normals);
-			missing--;
+		want.sort(Comparator.comparingDouble(t -> t.bounds == null ? 0 : distance(t.bounds, cam)));
+		int budget = UPLOAD_BUDGET;
+		int left = 0;
+		for (Tile t : want) {
+			if (t.kind == Kind.PROPS) {
+				left += uploadProps(t, cam, normals, budget);
+				budget = Math.max(0, budget - lastUploaded);
+				continue;
+			}
+			if (t.cpu == null && t.reading == null) {
+				if (reading < READS) {
+					t.reading = CompletableFuture.supplyAsync(() -> read(t));
+					reading++;
+				}
+				left++;
+				continue;
+			}
+			if (t.cpu == null && t.reading.isDone()) {
+				t.cpu = t.reading.join();
+				t.reading = null;
+				if (t.bounds == null) {
+					t.bounds = boundsOf(t.cpu);
+				}
+			}
+			if (t.cpu == null) {
+				left++;
+				continue;
+			}
+			while (budget > 0 && t.gpu.size() < t.cpu.size()) {
+				Lcum.Batch b = t.cpu.get(t.gpu.size());
+				t.gpu.add(toGpu(b, normals));
+				budget -= b.indices().length;
+			}
+			if (t.gpu.size() == t.cpu.size()) {
+				t.ready = true;
+				t.cpu = null; // on the GPU now; read again from disk if it is ever needed again
+			} else {
+				left++;
+			}
+		}
+		missing = left;
+	}
+
+	private int lastUploaded;
+
+	/** LEGO props: the file once, then its columns within the props radius. Returns 1 while something is missing. */
+	private int uploadProps(Tile t, Vec3d cam, boolean normals, int budget) {
+		lastUploaded = 0;
+		if (t.cpu == null) {
+			if (t.reading == null) {
+				t.reading = CompletableFuture.supplyAsync(() -> Lcum.split(read(t), CELL));
+				return 1;
+			}
+			if (!t.reading.isDone()) {
+				return 1;
+			}
+			t.cpu = t.reading.join();
+			t.reading = null;
+			if (t.bounds == null) {
+				t.bounds = boundsOf(t.cpu);
+			}
+			while (t.gpu.size() < t.cpu.size()) {
+				t.gpu.add(null);
+			}
+		}
+		double radius = LcuSettings.radius();
+		int left = 0;
+		for (int i = 0; i < t.cpu.size(); i++) {
+			double d = distance(t.cpu.get(i), cam);
+			GpuBatch g = t.gpu.get(i);
+			if (g == null && d <= radius) {
+				if (lastUploaded < budget) {
+					t.gpu.set(i, toGpu(t.cpu.get(i), normals));
+					lastUploaded += t.cpu.get(i).indices().length;
+				} else {
+					left = 1;
+				}
+			} else if (g != null && d > radius + UNLOAD_MARGIN) {
+				g.buffer.close();
+				t.gpu.set(i, null);
+			}
+		}
+		t.ready = left == 0;
+		return left;
+	}
+
+	private static List<Lcum.Batch> read(Tile t) {
+		try {
+			return Lcum.read(t.file);
+		} catch (Exception e) {
+			LcuCraft.LOG.warn("tile {} unreadable: {}", t.name, e.toString());
+			return List.of();
 		}
 	}
 
-	/** The city is always loaded; the LEGO props only within the radius set in LCUxMinecraft Settings. */
-	private double radius(int i) {
-		return i < propStart ? Double.POSITIVE_INFINITY : LcuSettings.radius();
+	private static Box boundsOf(List<Lcum.Batch> batches) {
+		if (batches.isEmpty()) {
+			return new Box(0, 0, 0, 0, 0, 0);
+		}
+		Box b = null;
+		for (Lcum.Batch x : batches) {
+			Box o = new Box(x.minX(), x.minY(), x.minZ(), x.maxX(), x.maxY(), x.maxZ());
+			b = b == null ? o : b.union(o);
+		}
+		return b;
 	}
 
-	private boolean visible(int i, Vec3d cam) {
-		return slots[i] != null && (i < propStart || distance(cpu.get(i), cam) <= LcuSettings.radius());
-	}
-
-	/** One converted batch into a vertex buffer (normals only for Iris, see the class comment). */
+	/**
+	 * One converted batch into a vertex buffer (normals only for Iris, see the class comment). Each vertex goes up
+	 * once and the triangles get their own index list, half the video memory of three vertices per triangle.
+	 */
 	GpuBatch toGpu(Lcum.Batch b, boolean normals) {
+		ByteBuffer v = b.vertices();
+		int[] idx = b.indices();
+		// split pieces (props columns) share their batch's vertices: send only the ones this piece uses
+		int[] remap = new int[v.limit() / Lcum.STRIDE];
+		Arrays.fill(remap, -1);
+		int[] order = new int[remap.length];
+		int n = 0;
+		for (int i : idx) {
+			if (remap[i] < 0) {
+				remap[i] = n;
+				order[n++] = i;
+			}
+		}
 		BufferBuilder bb = builder();
 		bb.begin(VertexFormat.DrawMode.TRIANGLES, VertexFormats.POSITION_COLOR_TEXTURE_OVERLAY_LIGHT_NORMAL);
-		ByteBuffer v = b.vertices();
-		for (int i : b.indices()) {
-			int o = i * Lcum.STRIDE;
+		for (int k = 0; k < n; k++) {
+			int o = order[k] * Lcum.STRIDE;
 			float nx = normals ? v.get(o + 24) / 127f : 0, ny = normals ? v.get(o + 25) / 127f : 0,
 					nz = normals ? v.get(o + 26) / 127f : 0;
 			bb.vertex(v.getFloat(o), v.getFloat(o + 4), v.getFloat(o + 8),
@@ -298,6 +510,23 @@ public final class LcuRenderer {
 		bb.end();
 		VertexBuffer vb = new VertexBuffer();
 		vb.upload(bb);
+		VertexBufferAccessor acc = (VertexBufferAccessor) vb;
+		ByteBuffer ib = MemoryUtil.memAlloc(idx.length * 4);
+		try {
+			for (int i : idx) {
+				ib.putInt(remap[i]);
+			}
+			ib.flip();
+			GlStateManager._glBindVertexArray(acc.lcucraft$vertexArray());
+			RenderSystem.glBindBuffer(0x8893, acc::lcucraft$indexBuffer);   // GL_ELEMENT_ARRAY_BUFFER
+			RenderSystem.glBufferData(0x8893, ib, 0x88E4);                 // GL_STATIC_DRAW
+			VertexBuffer.unbindVertexArray();
+		} finally {
+			MemoryUtil.memFree(ib);
+		}
+		acc.lcucraft$setNoIndexBuffer(false);
+		acc.lcucraft$setElementFormat(VertexFormat.IntType.INT);
+		acc.lcucraft$setCount(idx.length);
 		return new GpuBatch(texture(b.texture()), b.translucent(), b.interior(), vb,
 				new Box(b.minX(), b.minY(), b.minZ(), b.maxX(), b.maxY(), b.maxZ()));
 	}
@@ -305,10 +534,21 @@ public final class LcuRenderer {
 	/** LEGO prop pieces on the GPU now (DevTest). */
 	int loadedProps() {
 		int n = 0;
-		for (int i = Math.min(propStart, slots.length); i < slots.length; i++) {
-			n += slots[i] != null ? 1 : 0;
+		for (Tile t : tiles) {
+			if (t.kind == Kind.PROPS) {
+				for (GpuBatch g : t.gpu) {
+					n += g != null ? 1 : 0;
+				}
+			}
 		}
 		return n;
+	}
+
+	/** Full-detail tiles on the GPU now / tiles of the city (DevTest). */
+	String loadedTiles() {
+		long city = tiles.stream().filter(t -> t.kind == Kind.CITY).count();
+		long ready = tiles.stream().filter(t -> t.kind == Kind.CITY && t.ready).count();
+		return ready + "/" + city;
 	}
 
 	boolean withNormals() {
@@ -378,10 +618,46 @@ public final class LcuRenderer {
 		return new Identifier(LcuCraft.ID, "lcu/" + id.replace("+", "/n/"));  // '+' is not allowed in identifiers
 	}
 
+	/** The GPU batches to draw this frame: full tiles where they are ready, the game's far version elsewhere. */
+	private void collect(Vec3d cam, boolean shadow, List<GpuBatch> out) {
+		double props = LcuSettings.radius();
+		for (Tile t : tiles) {
+			switch (t.kind) {
+				case CITY, ALWAYS -> {
+					if (t.ready) {
+						out.addAll(t.gpu);
+					}
+				}
+				case LOD -> {
+					// the far version stands in until its full tile is on the GPU; never in the shadow map (too far)
+					if (!shadow && t.ready && !cityReady(t)) {
+						out.addAll(t.gpu);
+					}
+				}
+				case PROPS -> {
+					for (int i = 0; i < t.gpu.size(); i++) {
+						GpuBatch g = t.gpu.get(i);
+						if (g != null && t.cpu != null && distance(t.cpu.get(i), cam) <= props) {
+							out.add(g);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	/** lod tile -> its full tile is ready. */
+	private boolean cityReady(Tile lod) {
+		Tile c = fullOf.get(lod);
+		return c != null && c.ready;
+	}
+
+	private final Map<Tile, Tile> fullOf = new HashMap<>();
+
 	/** WorldRenderEvents.AFTER_ENTITIES */
 	public void renderWorld(WorldRenderContext ctx) {
 		upload();
-		if (slots.length == 0 || perfNoCity) {
+		if (!loaded || perfNoCity) {
 			return;
 		}
 		Vec3d cam = ctx.camera().getPos();
@@ -391,12 +667,11 @@ public final class LcuRenderer {
 		Matrix4f view = ms.peek().getPositionMatrix();
 		Matrix4f proj = ctx.projectionMatrix();
 		modulate(false);
+		List<GpuBatch> draw = new ArrayList<>();
+		collect(cam, false, draw);
 		List<GpuBatch> glass = new ArrayList<>();
-		for (int i = 0; i < slots.length; i++) {
-			if (!visible(i, cam)) {
-				continue;
-			}
-			GpuBatch b = slots[i];
+		Map<Identifier, List<GpuBatch>> solid = new HashMap<>(), interior = new HashMap<>();
+		for (GpuBatch b : draw) {
 			if (ctx.frustum() != null && !ctx.frustum().isVisible(b.bounds)) {
 				continue;
 			}
@@ -404,14 +679,13 @@ public final class LcuRenderer {
 				glass.add(b);
 				continue;
 			}
-			if (b.interior) {
-				modulate(true);
-			}
-			draw(RenderLayer.getEntityCutoutNoCull(b.texture), b, view, proj);
-			if (b.interior) {
-				modulate(false);
-			}
+			(b.interior ? interior : solid).computeIfAbsent(b.texture, k -> new ArrayList<>()).add(b);
 		}
+		// one shader set-up per texture instead of per batch: the city is thousands of batches
+		solid.forEach((tex, list) -> drawAll(RenderLayer.getEntityCutoutNoCull(tex), list, view, proj));
+		modulate(true);
+		interior.forEach((tex, list) -> drawAll(RenderLayer.getEntityCutoutNoCull(tex), list, view, proj));
+		modulate(false);
 		if (!perfNoTrains) {
 			trains.render(ms, cam, proj, false);
 		}
@@ -439,7 +713,7 @@ public final class LcuRenderer {
 	 */
 	public void renderShadowPass() {
 		shadowPasses++;
-		if (slots.length == 0 || perfNoShadow || perfNoCity) {
+		if (!loaded || perfNoShadow || perfNoCity) {
 			return;
 		}
 		Matrix4f base;
@@ -470,12 +744,15 @@ public final class LcuRenderer {
 		Vec3d l = new Vec3d(L[0], L[1], L[2]).normalize();
 		Vec3d up = Math.abs(l.y) > 0.99 ? new Vec3d(1, 0, 0) : new Vec3d(0, 1, 0);
 		Vec3d r = up.crossProduct(l).normalize(), u = l.crossProduct(r);
-		for (int i = 0; i < slots.length; i++) {
-			GpuBatch b = slots[i];
-			if (b != null && !b.translucent && inShadow(b.bounds, cam, r, u, half) && visible(i, cam)) {
-				draw(RenderLayer.getEntityCutoutNoCull(b.texture), b, view, proj);
+		List<GpuBatch> draw = new ArrayList<>();
+		collect(cam, true, draw);
+		Map<Identifier, List<GpuBatch>> byTexture = new HashMap<>();
+		for (GpuBatch b : draw) {
+			if (!b.translucent && inShadow(b.bounds, cam, r, u, half)) {
+				byTexture.computeIfAbsent(b.texture, k -> new ArrayList<>()).add(b);
 			}
 		}
+		byTexture.forEach((tex, list) -> drawAll(RenderLayer.getEntityCutoutNoCull(tex), list, view, proj));
 	}
 
 	private static boolean inShadow(Box b, Vec3d cam, Vec3d r, Vec3d u, double half) {
@@ -497,6 +774,69 @@ public final class LcuRenderer {
 		}
 	}
 
+	/**
+	 * Draws batches that share a render layer with one shader set-up: the uniforms VertexBuffer.setShader would
+	 * upload for every batch are set once, then each buffer is bound and drawn.
+	 */
+	static void drawAll(RenderLayer layer, List<GpuBatch> batches, Matrix4f view, Matrix4f proj) {
+		layer.startDrawing();
+		Shader shader = RenderSystem.getShader();
+		if (shader == null) {
+			layer.endDrawing();
+			return;
+		}
+		for (int i = 0; i < 12; i++) {
+			shader.addSampler("Sampler" + i, RenderSystem.getShaderTexture(i));
+		}
+		if (shader.modelViewMat != null) {
+			shader.modelViewMat.set(view);
+		}
+		if (shader.projectionMat != null) {
+			shader.projectionMat.set(proj);
+		}
+		if (shader.viewRotationMat != null) {
+			shader.viewRotationMat.method_39978(RenderSystem.getInverseViewRotationMatrix());
+		}
+		if (shader.colorModulator != null) {
+			shader.colorModulator.set(RenderSystem.getShaderColor());
+		}
+		if (shader.fogStart != null) {
+			shader.fogStart.set(RenderSystem.getShaderFogStart());
+		}
+		if (shader.fogEnd != null) {
+			shader.fogEnd.set(RenderSystem.getShaderFogEnd());
+		}
+		if (shader.fogColor != null) {
+			shader.fogColor.set(RenderSystem.getShaderFogColor());
+		}
+		if (shader.fogShape != null) {
+			shader.fogShape.set(RenderSystem.getShaderFogShape().getId());
+		}
+		if (shader.textureMat != null) {
+			shader.textureMat.set(RenderSystem.getTextureMatrix());
+		}
+		if (shader.gameTime != null) {
+			shader.gameTime.set(RenderSystem.getShaderGameTime());
+		}
+		if (shader.screenSize != null) {
+			var w = MinecraftClient.getInstance().getWindow();
+			shader.screenSize.set((float) w.getFramebufferWidth(), (float) w.getFramebufferHeight());
+		}
+		RenderSystem.setupShaderLights(shader);
+		net.minecraft.client.render.BufferRenderer.unbindAll();  // its cache of bound buffers would go stale
+		shader.bind();
+		for (GpuBatch b : batches) {
+			GlStateManager._glBindVertexArray(((VertexBufferAccessor) b.buffer).lcucraft$vertexArray());
+			b.buffer.bind();
+			b.buffer.getVertexFormat().startDrawing();
+			b.buffer.drawElements();
+		}
+		shader.unbind();
+		VertexBuffer.unbind();
+		VertexBuffer.unbindVertexArray();
+		layer.endDrawing();
+	}
+
 	static void draw(RenderLayer layer, GpuBatch b, Matrix4f view, Matrix4f proj) {
 		layer.startDrawing();
 		Shader shader = RenderSystem.getShader();
@@ -510,9 +850,8 @@ public final class LcuRenderer {
 		if (sky.isEmpty()) {
 			return false;
 		}
-		// scale the sky just inside the far plane (render distance x 4)
-		float far = MinecraftClient.getInstance().gameRenderer.getViewDistance() * 3.5f;
-		float s = far / SKY_RADIUS;
+		// just inside the far plane, behind the farthest tiles of the city
+		float s = FAR_PLANE * 0.9f / SKY_RADIUS;
 		matrices.push();
 		matrices.scale(s, s, s);
 		Matrix4f view = matrices.peek().getPositionMatrix();

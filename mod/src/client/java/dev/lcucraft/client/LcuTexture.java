@@ -81,6 +81,13 @@ public class LcuTexture extends AbstractTexture {
 		GlStateManager._texParameter(GL11.GL_TEXTURE_2D, GL14.GL_TEXTURE_LOD_BIAS, 0f);
 		GlStateManager._texParameter(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL11.GL_REPEAT);
 		GlStateManager._texParameter(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL11.GL_REPEAT);
+		// Minecraft leaves the unpack state of its own last upload (row length, skipped pixels and rows of a font
+		// glyph or atlas sprite): with it the driver would read our tightly packed pixels at the wrong stride, past
+		// the end of the buffer, and crash
+		GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0);
+		GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, 4);
 		boolean usesAlpha = alpha && hasAlpha(mips[0]);
 		int format = usesAlpha ? EXTTextureCompressionS3TC.GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
 				: EXTTextureCompressionS3TC.GL_COMPRESSED_RGB_S3TC_DXT1_EXT;

@@ -2,6 +2,7 @@ package dev.lcucraft.client.mixin;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.lcucraft.client.LcuCraftClient;
+import dev.lcucraft.client.LcuRenderer;
 import net.minecraft.client.render.BackgroundRenderer;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.render.CameraSubmersionType;
@@ -38,7 +39,8 @@ public class BackgroundRendererMixin {
 				&& camera.getSubmersionType() == CameraSubmersionType.NONE) {
 			float far = LcuCraftClient.RENDERER.fogFar();
 			RenderSystem.setShaderFogStart(far * 0.5f); // linear stand-in for the game's softer noon haze
-			RenderSystem.setShaderFogEnd(far * 2f);
+			// thick only towards the far side of the city, so the low-detail districts stay in sight
+			RenderSystem.setShaderFogEnd(Math.max(far * 2f, LcuRenderer.FAR_FOG));
 			float[] c = LcuCraftClient.RENDERER.fogColour();
 			RenderSystem.setShaderFogColor(c[0], c[1], c[2]);
 		}

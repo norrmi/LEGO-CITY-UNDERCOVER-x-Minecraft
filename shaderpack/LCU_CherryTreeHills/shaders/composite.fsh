@@ -22,7 +22,7 @@ void main() {
 		vec3 view = v.xyz / v.w;
 		vec3 dir = normalize(mat3(gbufferModelViewInverse) * view);
 		float d = length(view);
-		float f = 0.85 * smoothstep(LCU_FOG_NEAR + 0.5 * LCU_FOG_FAR, 2.0 * LCU_FOG_FAR / max(FOG_AMOUNT, 0.01), d) * step(0.01, FOG_AMOUNT);
+		float f = 0.85 * smoothstep(LCU_FOG_NEAR + 0.5 * LCU_FOG_FAR, max(2.0 * LCU_FOG_FAR, LCU_FAR_FOG) / max(FOG_AMOUNT, 0.01), d) * step(0.01, FOG_AMOUNT);
 		vec3 fogc = mix(LCU_LOWER_FOG, LCU_FOG, smoothstep(-0.2, 0.3, dir.y));
 		c = mix(c, fogc, f);
 	}

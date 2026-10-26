@@ -100,10 +100,15 @@ def export_props(game, shared, texdir, tiles):
         if not gsc or not gz2:
             missing.add(b)
             continue
-        data = open(gsc[0], "rb").read()
-        specials, clips = g.read_specials(data)
-        templates = read_templates(gz2[0])
-        bdraws = e.export_gsc(gsc[0], shared, np.zeros(3), texdir, lightmap=False, tag_items=True)
+        try:
+            data = open(gsc[0], "rb").read()
+            specials, clips = g.read_specials(data)
+            templates = read_templates(gz2[0])
+            bdraws = e.export_gsc(gsc[0], shared, np.zeros(3), texdir, lightmap=False, tag_items=True)
+        except Exception as ex:  # a builder laid out in a way the converter does not read yet: its props stay out
+            print(f"  builder {b} skipped: {ex}")
+            missing.add(b)
+            continue
         for tmpl, inst in insts:
             items = object_items(specials, clips, tmpl)
             origin = templates.get(tmpl)

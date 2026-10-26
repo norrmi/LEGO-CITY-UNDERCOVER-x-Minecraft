@@ -37,6 +37,13 @@ loom {
 			vmArg "-Dlcucraft.devPerf=true"
 			vmArg "-Dlcucraft.dataDir=" + file('../build/lcu_data').absolutePath
 		}
+		devCity {
+			inherit client
+			name "Dev Test (every district)"
+			vmArg "-Dlcucraft.devTest=Cherry Tree Hills"
+			vmArg "-Dlcucraft.devCity=true"
+			vmArg "-Dlcucraft.dataDir=" + file('../build/lcu_data').absolutePath
+		}
 		server {
 			vmArg "-Dlcucraft.dataDir=" + file('../build/lcu_data').absolutePath
 		}

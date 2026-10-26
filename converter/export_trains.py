@@ -29,7 +29,8 @@ def rail_points(out):
     """Rail vertices (Minecraft coordinates) from the converted meshes."""
     names = json.load(open(os.path.join(out, "textures.json")))
     pts = []
-    for f in glob.glob(os.path.join(out, "meshes", "*.lcum")):
+    # Cherry Tree Hills only: other districts have rails of their own
+    for f in glob.glob(os.path.join(out, "meshes", "sf_residential_*.lcum")):
         d = open(f, "rb").read()
         p = 12
         for _ in range(struct.unpack_from("<I", d, 8)[0]):

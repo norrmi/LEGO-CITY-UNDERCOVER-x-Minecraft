@@ -1,8 +1,9 @@
 # LEGO City Undercover x Minecraft
 
-**Fan-made project.** Cherry Tree Hills and Little Italy from LEGO City Undercover in Minecraft **1.18.2 (Fabric)**,
-with the game's real 3D models, textures, baked lighting, sky, water, sounds, LEGO objects, parkour, the police
-station and the ice cream parlour inside, and Chase McCain's car to drive. Nothing is made of blocks.
+**Fan-made project.** The whole of LEGO City from LEGO City Undercover in Minecraft **1.18.2 (Fabric)**: all 24
+districts, islands and bridges, with the game's real 3D models, textures, baked lighting, sky, water, sounds, LEGO
+objects, parkour, the police station and the ice cream parlour inside, and Chase McCain's car to drive. Nothing is
+made of blocks.
 
 > This is an unofficial fan project. It is not affiliated with, endorsed or sponsored by TT Games, Warner Bros.
 > Interactive Entertainment, Nintendo or the LEGO Group. LEGO and LEGO City Undercover are trademarks of their
@@ -14,7 +15,7 @@ station and the ice cream parlour inside, and Chase McCain's car to drive. Nothi
 
 | Folder | What it is |
 |---|---|
-| `dist/` | **`LCU-Installer.exe`** (the installer, nothing else needed; the folder version is on Releases) and the built mod `lcucraft-1.0.0.jar` (Fabric API inside) |
+| `dist/` | **`LCU-Installer.exe`** (the installer, nothing else needed; the folder version is on Releases) and the built mod `lcucraft-1.1.0.jar` (Fabric API inside) |
 | `installer/` | the installer's source: `gui.py` (the window), `install.py` (the steps, also usable from the command line), `build_exe.py` |
 | `mod/` | Fabric 1.18.2 mod source: draws the converted meshes, sky, fog, collision, cars, interiors |
 | `converter/` | Python: reads the game's GSC/GHG/NXG_TEXTURES/RES/LED/GIZ files and writes meshes, textures, collision, lighting |
@@ -33,11 +34,12 @@ official Minecraft Launcher, the Modrinth App, Prism Launcher or CurseForge.
    - an existing **Minecraft 1.18.2 Fabric** instance (marked `*` when it is surely one), or
    - **a new profile in the official Minecraft Launcher**: it installs Fabric Loader for 1.18.2 and adds the profile
      "LEGO City Undercover x Minecraft" (close the launcher first).
-3. Press **Install**. It converts the game (2-3 minutes, ~1 GB), puts the mod into `mods/` (Fabric API is inside the
+3. Press **Install**. It converts the whole city (about 7 minutes, ~5 GB of disk), puts the mod into `mods/` (Fabric API is inside the
    mod, nothing else to install), downloads Sodium 0.4.1 and Iris 1.6.11 from Modrinth for the shaders (untick it if
    you don't want them), adds the shader pack and creates the world **Cherry Tree Hills** (an existing one is left
    alone).
-4. Start the instance or the profile, open the world, and pick the shader pack `LCU_CherryTreeHills` in
+4. Give the instance **8 GB of memory** (a new Minecraft Launcher profile already has it; in the Modrinth App,
+   Prism or CurseForge it is in the instance's settings), start it, open the world, and pick the shader pack `LCU_CherryTreeHills` in
    Options > Video Settings > Shader Packs if you like.
 
 Run the installer again after an update: untick "Convert the game" to only replace the mod and the shader pack.
@@ -59,7 +61,7 @@ python installer/install.py --game "<LEGO City Undercover folder>" --instance "<
 In game:
 
 - `/lcu` takes you to the start point; `/lcu time dawn|noon|dusk` switches the game's lighting sets
-- Esc > **LCUxMinecraft Settings**: LEGO objects on/off and their load radius
+- Esc > **LCUxMinecraft Settings**: LEGO objects on/off and their load radius, and the city detail radius
 - the police station: step on 85 77 -152 in Cherry Tree Hills; the lift menu takes you between floors
 - the ice cream parlour: step on -1715 74 545 in Little Italy
 - Chase's Narym waits on parking bay 04 at the police station: right-click to get in, W/S/A/D to drive, sneak to
@@ -125,8 +127,19 @@ installer/requirements.txt`, then `python installer/build_exe.py` writes `dist/L
 - **Sea:** the world is a flat world with sand at Y 58 and water at Y 59–64, so you can swim and nothing flows.
   The shader pack draws that water in the game's sea colour (`bm_sea02`) with sky reflection, sun glint and waves.
   The game's shoreline foam and seaweed edges sit on top. Without shaders it is Minecraft's own water.
-- **Little Italy:** NY_LITTLE_ITALY is converted too, where the game has it: about 1200 blocks west of Cherry Tree
-  Hills (Minecraft X -1830..-1490, Z 265..750), with its props and parkour. The sea in between is empty.
+- **The whole city:** every district where the game has it (`export_lcu.AREAS`): Cherry Tree Hills, Little Italy,
+  Albatross docks, Chinatown, Downtown (and East, West), Bright Lights Plaza, Uptown, Central Park, the canal, the
+  beach, the airport, the tunnels, the farmlands and the forest, the islands (Liberty, prison, space centre), the
+  three bridges and the mountains: 391 tiles, ~35 M vertices, about 4000 x 3700 blocks. The mod reads a tile from
+  disk and puts it on the GPU when it comes within the **city detail radius** (2000 blocks by default; 1000 / 2000 /
+  3000 / whole city in the settings) and frees it again behind you. Everywhere farther away it draws the game's own
+  low-detail version of the tile (`*_ULD` files, 3.8 M vertices for the whole city), so the city is in sight from
+  anywhere; the camera's far plane and the fog reach 8192 / 5000 blocks in a LEGO City world for that. Tiles go to
+  the GPU with shared vertices (an index list per batch, half the video memory of three vertices per triangle) and
+  are drawn grouped by texture with one shader set-up per group. Measured with everything around Downtown loaded
+  (~350 tiles, RTX 5070 Ti, Sodium + Iris, shaders off): 70-120 FPS, ~3 GB of video memory, 0.6 GB of Java heap
+  after garbage collection (peaks of ~4.5 GB while flying across the city fast, hence the 8 GB).
+- **Little Italy:** about 1200 blocks west of Cherry Tree Hills (Minecraft X -1830..-1490, Z 265..750).
 - **Parkour:** the blue-and-white free-running pieces the tiles place as obstacle gizmos (`<tile>.GIZ`) get their
   BUILDER_PARKOUR models (`export_parkour.py`). Climbing walls and drainpipes are climbable like ladders: walk into
   them or hold jump to go up, sneak to hold on (`climb.json`, LivingEntityClimbMixin).
@@ -137,7 +150,8 @@ installer/requirements.txt`, then `python installer/build_exe.py` writes `dist/L
   brake, A/D steer, sneak to get out; it moves on the driver's client and collides with the city mesh. Chase McCain's
   Narym waits on bay 04 by the police station (spawned once per world). `/lcu car <model>` puts a car in front of
   you (the Narym and the residential cars of AITYPES.TXT). No traffic.
-- **Water:** the game's own sea surface (bm_sea02) lies just above Minecraft's water around both districts.
+- **Water:** the game's sea texture (bm_sea02) as an even surface just above Minecraft's water, around the whole
+  city and 4000 blocks beyond (the game's own sea plane has holes and long fan triangles), plus its shoreline foam.
 - **Interior lighting:** interiors (vertex alpha 124, mesh flag 4) skip the sun, its shadows and the time-of-day
   grade; their baked light is dimmed and warmed and the room's lamps (<room>_LIGHTING.LED) are baked in; signs, neon
   and lamps stay bright. Additive glows (glow_gradient light cones) are blended, never solid.
@@ -161,9 +175,11 @@ installer/requirements.txt`, then `python installer/build_exe.py` writes `dist/L
   on two track points so it bends through curves. Its position comes from the world time, and it casts shadows with
   the shader pack. It is scenery only: no collision, you can't ride it.
 - **LCUxMinecraft Settings** (button in the Esc menu): LEGO objects ON/OFF (off removes the props and their
-  collision, kept apart in `collision_props.bin`), and the LEGO objects radius (100 / 500 / 1000 blocks / FULL MAP,
-  default 500, saved in `config/lcucraft.json`). The city itself is always loaded whole; only the ~850 LEGO props are
-  loaded and drawn around the player, nearest first, and freed again 64 blocks beyond the radius.
+  collision, kept apart in `collision_props.bin`), the LEGO objects radius (100 / 500 / 1000 blocks / FULL MAP,
+  default 500) and the city detail radius (1000 / 2000 / 3000 blocks / WHOLE CITY, default 2000), saved in
+  `config/lcucraft.json`. Both load nearest first and free what is left 64 blocks beyond the radius.
+- **Collision for the whole city:** ~30 M triangles in `collision_mesh.bin`, grouped in 128-block columns. The file
+  stays memory-mapped (outside the Java heap) and only the columns players walk in get a section index.
 
 ## How LCU differs from LB2 (for the converter)
 
@@ -188,6 +204,8 @@ installer/requirements.txt`, then `python installer/build_exe.py` writes `dist/L
 
 ## Not done yet
 
+- The props of one Downtown builder (`Builder_NY_Downtown_Global_1`) are not placed: its buffer layout is not read
+  yet. Parts of the Monaco tunnel lie below Minecraft's water line and are flooded.
 - Lightmaps are per vertex (subdivided), not per pixel. Small sharp shadows are softer than in the game.
 - Helper meshes (untextured, no UVs, vertex colour exactly 1: terrain/collision shells, the shadow imposter) are
   collision only. Drawn in their raw material colour, they showed up as flat green/orange slabs.
