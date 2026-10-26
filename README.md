@@ -1,4 +1,4 @@
-# LEGO City Undercover x Minecraft
+# LEGO City Undercover x Minecraft 
 
 **Fan-made project.** The whole of LEGO City from LEGO City Undercover in Minecraft **1.18.2 (Fabric)**: all 24
 districts, islands and bridges, with the game's real 3D models, textures, baked lighting, sky, water, sounds, LEGO
