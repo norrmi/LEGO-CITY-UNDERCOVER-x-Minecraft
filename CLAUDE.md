@@ -4,10 +4,6 @@ What README.md does not say: how this project is worked on, decisions taken, and
 for what the project does and how players install it.
 
 ## Owner and rules
-
-- Owner: norrmi (GitHub `norrmi/LEGO-CITY-UNDERCOVER-x-Minecraft`). Writes mostly in Russian: answer in Russian.
-- **Commits and PRs carry no Claude co-author / "Generated with" lines** (the owner asked for that). Author is
-  `norrmi <1norrmi@gmail.com>` (set in the repo's local git config).
 - Fan-made project. **Never commit or ship anything from the game**: no converted data (`lcu_data/`, `*.lcum`, PNGs
   from textures, `lcu_lighting.glsl`), no screenshots of converted content in the repo. Users convert from their own
   copy. `installer/build_exe.py` stages the shader pack without `lcu_lighting.glsl` for this reason.
