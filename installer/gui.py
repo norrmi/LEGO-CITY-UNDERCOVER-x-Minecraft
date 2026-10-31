@@ -45,7 +45,11 @@ class App:
         try:
             root.iconbitmap(ICON_ICO)
         except tk.TclError:
-            pass
+            try:  # Linux: Tk reads no .ico there
+                self.icon = tk.PhotoImage(file=ICON_PNG)
+                root.iconphoto(True, self.icon)
+            except tk.TclError:
+                pass
         f = ttk.Frame(root, padding=14)
         f.pack(fill="both", expand=True)
         f.columnconfigure(1, weight=1)

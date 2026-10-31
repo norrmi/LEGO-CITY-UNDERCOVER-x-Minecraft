@@ -16,7 +16,7 @@ made of blocks.
 | Folder | What it is |
 |---|---|
 | `dist/` | **`LCU-Installer.exe`** (the installer, nothing else needed; the folder version is on Releases) and the built mod `lcucraft-1.1.0.jar` (Fabric API inside) |
-| `installer/` | the installer's source: `gui.py` (the window), `install.py` (the steps, also usable from the command line), `build_exe.py` |
+| `installer/` | the installer's source: `gui.py` (the window), `install.py` (the steps, also usable from the command line), `install.sh` (Linux), `build_exe.py` |
 | `mod/` | Fabric 1.18.2 mod source: draws the converted meshes, sky, fog, collision, cars, interiors |
 | `converter/` | Python: reads the game's GSC/GHG/NXG_TEXTURES/RES/LED/GIZ files and writes meshes, textures, collision, lighting |
 | `shaderpack/LCU_CherryTreeHills/` | Iris shader pack: the game's sun, shadows, fog, bloom, water; presets LOW/MEDIUM/HIGH |
@@ -57,6 +57,37 @@ python -m pip install -r installer/requirements.txt
 ```bash
 python installer/install.py --game "<LEGO City Undercover folder>" --instance "<Minecraft instance folder>" --extras
 ```
+
+### Linux (Arch and others)
+
+There is no exe: the same installer runs from the repository with Python. The game itself runs through Proton
+(Steam > LEGO City Undercover > Properties > Compatibility); the installer only reads its files.
+
+```bash
+sudo pacman -S python tk git
+```
+
+```bash
+git clone https://github.com/norrmi/LEGO-CITY-UNDERCOVER-x-Minecraft.git
+```
+
+```bash
+LEGO-CITY-UNDERCOVER-x-Minecraft/installer/install.sh
+```
+
+`install.sh` puts the converter's Python packages (numpy, Pillow, soundfile) into `installer/.venv` and opens the
+installer window. It looks for the game in Steam's library folders (`~/.local/share/Steam`, `~/.steam/steam`, the
+Flatpak's `~/.var/app/com.valvesoftware.Steam`) and for instances of the Modrinth App
+(`~/.local/share/ModrinthApp/profiles`, or `~/.var/app/com.modrinth.ModrinthApp/data/ModrinthApp/profiles` for the
+Flatpak), Prism Launcher (`~/.local/share/PrismLauncher`, Flatpak `org.prismlauncher.PrismLauncher`) and the
+official launcher (`~/.minecraft`). Anything else: pick **Other folder...** in the list, or give the folders
+yourself without the window:
+
+```bash
+LEGO-CITY-UNDERCOVER-x-Minecraft/installer/install.sh --game ~/.local/share/Steam/steamapps/common/"LEGO City Undercover" --instance ~/path/to/instance --extras
+```
+
+Linux support is new and not tested yet; please open an issue if the installer misses your game or instances.
 
 In game:
 

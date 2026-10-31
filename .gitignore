@@ -26,3 +26,6 @@ __pycache__/
 *.iml
 .DS_Store
 Thumbs.db
+
+# installer/install.sh (Linux) puts the converter's packages here
+installer/.venv/

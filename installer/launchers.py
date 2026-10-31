@@ -1,5 +1,9 @@
 """Finds LEGO City Undercover and Minecraft instances on this PC, and makes a Fabric 1.18.2 profile for the official
-Minecraft Launcher. Used by gui.py; everything here is a best guess the user can override with Browse."""
+Minecraft Launcher. Used by gui.py; everything here is a best guess the user can override with Browse.
+
+Windows: the launchers' folders under %APPDATA%, Steam from the registry. Linux (Arch and others): the same folders
+under $XDG_DATA_HOME (~/.local/share) and in their Flatpak sandboxes (~/.var/app/<id>), ~/.minecraft, and Steam's
+usual places (the game runs there through Proton, its files are the same)."""
 import base64
 import datetime
 import glob
@@ -13,8 +17,34 @@ MC_VERSION = "1.18.2"
 PROFILE_ID = "lcucraft"
 PROFILE_NAME = "LEGO City Undercover x Minecraft"
 META = "https://meta.fabricmc.net/v2/versions/loader/" + MC_VERSION
-APPDATA = os.environ.get("APPDATA", os.path.expanduser("~"))
-VANILLA = os.path.join(APPDATA, ".minecraft")
+HOME = os.path.expanduser("~")
+WINDOWS = os.name == "nt"
+APPDATA = os.environ.get("APPDATA", HOME)
+XDG_DATA = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")
+
+
+def _data_dirs(name, flatpak=None):
+    """Where a launcher keeps its data: %APPDATA%/<name> on Windows; on Linux $XDG_DATA_HOME/<name> and, for the
+    Flatpak build, ~/.var/app/<flatpak>/data/<name>."""
+    if WINDOWS:
+        return [os.path.join(APPDATA, name)]
+    dirs = [os.path.join(XDG_DATA, name)]
+    if flatpak:
+        dirs.append(os.path.join(HOME, ".var", "app", flatpak, "data", name))
+    return dirs
+
+
+def _vanilla_dir():
+    """The official launcher's .minecraft (on Linux also its Flatpak's)."""
+    if WINDOWS:
+        return os.path.join(APPDATA, ".minecraft")
+    for d in (os.path.join(HOME, ".minecraft"), os.path.join(HOME, ".var", "app", "com.mojang.Minecraft", ".minecraft")):
+        if os.path.isfile(os.path.join(d, "launcher_profiles.json")):
+            return d
+    return os.path.join(HOME, ".minecraft")
+
+
+VANILLA = _vanilla_dir()
 
 
 def _steam_libraries():
@@ -34,7 +64,12 @@ def _steam_libraries():
                 pass
     except ImportError:
         pass
-    roots.append(r"C:\Program Files (x86)\Steam")
+    if WINDOWS:
+        roots.append(r"C:\Program Files (x86)\Steam")
+    else:
+        roots += [os.path.join(XDG_DATA, "Steam"), os.path.join(HOME, ".steam", "steam"),
+                  os.path.join(HOME, ".steam", "root"),
+                  os.path.join(HOME, ".var", "app", "com.valvesoftware.Steam", ".local", "share", "Steam")]
     libs = []
     for root in roots:
         libs.append(root)
@@ -44,8 +79,9 @@ def _steam_libraries():
                 libs += [p.replace("\\\\", "\\") for p in re.findall(r'"path"\s+"([^"]+)"', f.read())]
     seen, out = set(), []
     for lib in libs:
-        if lib.lower() not in seen:
-            seen.add(lib.lower())
+        key = os.path.normcase(os.path.realpath(lib))  # ~/.steam/steam is a link to ~/.local/share/Steam
+        if key not in seen:
+            seen.add(key)
             out.append(lib)
     return out
 
@@ -64,17 +100,9 @@ def _mods_say_118(game_dir):
     return any("1.18.2" in os.path.basename(p) for p in glob.glob(os.path.join(game_dir, "mods", "*.jar")))
 
 
-def find_instances():
-    """[(label, game folder, ok)] for Modrinth App, Prism Launcher and CurseForge; ok means Fabric 1.18.2 for sure
-    (or very likely), those come first."""
+def _prism_instances(prism):
+    """Prism Launcher instances under one data folder (its prismlauncher.cfg may move them elsewhere)."""
     found = []
-    for base in (os.path.join(APPDATA, "ModrinthApp", "profiles"),
-                 os.path.join(APPDATA, "com.modrinth.theseus", "profiles")):
-        for d in sorted(glob.glob(os.path.join(base, "*"))):
-            if os.path.isdir(d):
-                found.append(("Modrinth: " + os.path.basename(d), d, _mods_say_118(d)))
-
-    prism = os.path.join(APPDATA, "PrismLauncher")
     inst = os.path.join(prism, "instances")
     cfg = os.path.join(prism, "prismlauncher.cfg")
     if os.path.isfile(cfg):
@@ -97,8 +125,22 @@ def find_instances():
         except (OSError, ValueError):
             pass
         found.append(("Prism: " + os.path.basename(d), game, ok))
+    return found
 
-    for d in sorted(glob.glob(os.path.join(os.path.expanduser("~"), "curseforge", "minecraft", "Instances", "*"))):
+
+def find_instances():
+    """[(label, game folder, ok)] for Modrinth App, Prism Launcher and CurseForge; ok means Fabric 1.18.2 for sure
+    (or very likely), those come first."""
+    found = []
+    for data in _data_dirs("ModrinthApp", "com.modrinth.ModrinthApp") + _data_dirs("com.modrinth.theseus"):
+        for d in sorted(glob.glob(os.path.join(data, "profiles", "*"))):
+            if os.path.isdir(d):
+                found.append(("Modrinth: " + os.path.basename(d), d, _mods_say_118(d)))
+
+    for prism in _data_dirs("PrismLauncher", "org.prismlauncher.PrismLauncher"):
+        found += _prism_instances(prism)
+
+    for d in sorted(glob.glob(os.path.join(HOME, "curseforge", "minecraft", "Instances", "*"))):
         ok = False
         try:
             with open(os.path.join(d, "minecraftinstance.json"), encoding="utf-8") as f:
